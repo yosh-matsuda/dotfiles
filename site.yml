@@ -1,0 +1,14 @@
+- name: Configure dotfiles environment
+  hosts: all
+  gather_facts: yes
+  gather_subset:
+    - "!all"
+    - "min"
+  become: false
+  roles:
+    - prerequisite
+    - pipx
+    - dotfiles
+    - brew
+    - tmux
+    - fish

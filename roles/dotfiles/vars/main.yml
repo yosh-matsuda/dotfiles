@@ -1,0 +1,45 @@
+dotfiles_bashrc_fragments:
+  - name: enable cdspell
+    block: |
+      # cd コマンドのディレクトリタイプミス修正
+      shopt -s cdspell
+  - name: disable empty completion
+    block: |
+      # 何も入力していない時に補完しない
+      shopt -s no_empty_cmd_completion
+  - name: ignore common commands in history
+    block: |
+      # よく使うコマンドは履歴に保存しない
+      export HISTIGNORE=fg*:bg*:history*:cd*:?:??:exit
+  - name: record history timestamps
+    block: |
+      # 履歴に時刻を記録
+      export HISTTIMEFORMAT='%Y-%m-%d %T '
+  - name: disable screen lock flow control
+    block: |
+      # スクリーンロックを無効化
+      stty stop undef
+      stty start undef
+  - name: load fzf bash integration
+    block: |
+      # fzf
+      [ -f ~/.fzf.bash ] && source ~/.fzf.bash
+  - name: exec fish in interactive bash
+    block: |
+      IsInteractiveTerminal() {
+          # if interactive shell
+          if [[ $- =~ i ]]; then
+              # if FD is a file descriptor that is associated with a terminal.
+              if test -t 1; then
+                  return 0
+              fi
+          fi
+          return 1
+      }
+
+      if [[ ${FISH_RUNNING-0} -eq 0 ]] && IsInteractiveTerminal; then
+          # if not vscode, run fish
+          if type fish 2>/dev/null 1>/dev/null; then
+              exec fish
+          fi
+      fi

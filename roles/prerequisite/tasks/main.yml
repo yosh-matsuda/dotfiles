@@ -1,0 +1,39 @@
+- name: APT packages
+  become: true
+  when: is_ubuntu
+  ansible.builtin.apt:
+    name: "{{ prerequisite_apt_packages }}"
+    update_cache: yes
+    autoremove: yes
+    purge: yes
+    state: latest
+
+- name: Add current user to docker group
+  when: ansible_facts['system'] == 'Linux'
+  block:
+    - name: Check docker group
+      ansible.builtin.getent:
+        database: group
+        key: docker
+        fail_key: false
+      register: docker_group
+    - name: Add current user to docker group
+      become: true
+      when: >-
+        docker_group.ansible_facts.getent_group is defined and
+        docker_group.ansible_facts.getent_group.get('docker') is not none
+      ansible.builtin.user:
+        name: "{{ ansible_facts['user_id'] }}"
+        groups: docker
+        append: yes
+
+- name: Create XDG dir
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - "{{ local_tmp_dir }}"
+    - "{{ xdg_config_home }}"
+    - "{{ xdg_local_bin_dir }}"
+    - "{{ xdg_data_home }}"
+    - "{{ xdg_cache_home }}"

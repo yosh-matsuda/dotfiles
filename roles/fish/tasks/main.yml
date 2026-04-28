@@ -1,0 +1,44 @@
+- name: Install fisher
+  when: brew_binary_path is not none
+  block:
+    - name: Resolve latest fisher X.X.X tag
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          git ls-remote --tags --refs https://github.com/jorgebucaran/fisher \
+            | python3 -c '
+          import re
+          import sys
+
+          tags = []
+          for line in sys.stdin:
+              match = re.search(r"refs/tags/(\d+\.\d+\.\d+)$", line.strip())
+              if match:
+                  tag = match.group(1)
+                  version = tuple(int(part) for part in tag.split("."))
+                  tags.append((version, tag))
+
+          if not tags:
+              raise SystemExit("No X.Y.Z fisher tags found")
+
+          print(max(tags)[1])
+          '
+      register: fisher_latest_tag
+      changed_when: false
+    - name: Download fisher
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/jorgebucaran/fisher/{{ fisher_latest_tag.stdout }}/functions/fisher.fish"
+        dest: "{{ fish_config_dir }}/functions/fisher.fish"
+        mode: "0644"
+
+- name: Sync fish plugins
+  when: brew_binary_path is not none
+  ansible.builtin.command:
+    argv:
+      - "{{ fish_binary_path }}"
+      - -lc
+      - fisher update
+  environment:
+    HOME: "{{ home_dir }}"
+    XDG_CONFIG_HOME: "{{ xdg_config_home }}"
+    PATH: "{{ brew_bin_dir }}:{{ ansible_facts['env']['PATH'] }}"

@@ -1,0 +1,10 @@
+set completion-ignore-case on
+"\C-n":history-search-forward
+"\C-p":history-search-backward
+"\e[A":history-search-backward
+"\e[B":history-search-forward
+"\e[1~": beginning-of-line
+"\e[2~": overwrite-mode
+"\e[3~": delete-char
+"\e[4~": end-of-line
+

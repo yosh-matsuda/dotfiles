@@ -1,0 +1,105 @@
+- name: Check if Homebrew is installed
+  when: brew_binary_path is not none
+  ansible.builtin.stat:
+    path: "{{ brew_binary_path }}"
+  register: brew_binary_stat
+
+- name: Create linuxbrew user
+  when: is_ubuntu and not brew_is_wsl
+  become: true
+  ansible.builtin.user:
+    name: linuxbrew
+    shell: /sbin/nologin
+    create_home: yes
+    state: present
+
+- name: Install Linux Homebrew prerequisites
+  when: is_ubuntu
+  become: true
+  ansible.builtin.apt:
+    name: "{{ brew_linux_prerequisite_packages }}"
+    state: present
+    update_cache: yes
+
+- name: Install Homebrew on Linux
+  when: is_ubuntu and not brew_binary_stat.stat.exists
+  block:
+    - name: Create Homebrew directories
+      become: true
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ brew_linux_owner }}"
+        group: "{{ brew_linux_owner }}"
+        mode: "0755"
+      loop:
+        - /home/linuxbrew
+        - "{{ brew_prefix_path }}"
+        - "{{ brew_prefix_path }}/bin"
+    - name: Check out Homebrew repository on WSL
+      when: brew_is_wsl
+      ansible.builtin.git:
+        repo: https://github.com/Homebrew/brew
+        dest: "{{ brew_repository_path }}"
+        depth: 1
+        update: no
+    - name: Check out Homebrew repository on Linux
+      when: not brew_is_wsl
+      become: true
+      become_user: linuxbrew
+      ansible.builtin.git:
+        repo: https://github.com/Homebrew/brew
+        dest: "{{ brew_repository_path }}"
+        depth: 1
+        update: no
+      environment:
+        HOME: /home/linuxbrew
+    - name: Link brew binary
+      become: true
+      ansible.builtin.file:
+        src: ../Homebrew/bin/brew
+        dest: "{{ brew_binary_path }}"
+        state: link
+        owner: "{{ brew_linux_owner }}"
+        group: "{{ brew_linux_owner }}"
+
+- name: Install Homebrew on macOS
+  when: is_macos and not brew_binary_stat.stat.exists
+  block:
+    - name: Download Homebrew package
+      ansible.builtin.get_url:
+        url: https://github.com/Homebrew/brew/releases/latest/download/Homebrew.pkg
+        dest: "{{ brew_pkg_path }}"
+        mode: "0644"
+    - name: Install Homebrew package
+      become: true
+      ansible.builtin.command:
+        cmd: installer -pkg {{ brew_pkg_path }} -target /
+
+- name: Refresh Homebrew installation state
+  when: brew_binary_path is not none
+  ansible.builtin.stat:
+    path: "{{ brew_binary_path }}"
+  register: brew_binary_stat
+
+- name: Check Homebrew health
+  when: brew_binary_path is not none and brew_binary_stat.stat.exists
+  become: "{{ brew_exec_user != ansible_facts['user_id'] }}"
+  become_user: "{{ brew_exec_user if brew_exec_user != ansible_facts['user_id'] else omit }}"
+  ansible.builtin.command:
+    cmd: "{{ brew_binary_path }} doctor"
+  environment:
+    HOME: "{{ brew_exec_home }}"
+    PATH: "{{ brew_bin_dir }}:{{ ansible_facts['env']['PATH'] }}"
+  changed_when: false
+
+- name: Install Homebrew packages
+  when: brew_binary_path is not none and brew_binary_stat.stat.exists
+  become: "{{ brew_exec_user != ansible_facts['user_id'] }}"
+  become_user: "{{ brew_exec_user if brew_exec_user != ansible_facts['user_id'] else omit }}"
+  community.general.homebrew:
+    name: "{{ brew_packages }}"
+    path: "{{ brew_bin_dir }}"
+    state: present
+  environment:
+    HOME: "{{ brew_exec_home }}"

@@ -1,0 +1,7 @@
+brew_is_wsl: "{{ is_wsl }}"
+brew_prefix_path: "{{ '/home/linuxbrew/.linuxbrew' if is_ubuntu else none }}"
+brew_repository_path: "{{ brew_prefix_path ~ '/Homebrew' if is_ubuntu else none }}"
+brew_pkg_path: /tmp/Homebrew.pkg
+brew_linux_owner: "{{ ansible_facts['user_id'] if brew_is_wsl else 'linuxbrew' }}"
+brew_exec_user: "{{ 'linuxbrew' if is_ubuntu and not brew_is_wsl else ansible_facts['user_id'] }}"
+brew_exec_home: "{{ '/home/linuxbrew' if is_ubuntu and not brew_is_wsl else home_dir }}"

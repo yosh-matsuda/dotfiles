@@ -1,0 +1,29 @@
+- name: Copy dotfiles to home directory
+  ansible.builtin.copy:
+    src: files/
+    dest: "{{ home_dir }}/"
+    force: true
+    backup: true
+
+- name: Copy scripts to local bin
+  ansible.builtin.copy:
+    src: scripts/
+    dest: "{{ xdg_local_bin_dir }}/"
+    force: true
+    mode: "0755"
+
+- name: Copy XDG config files
+  ansible.builtin.copy:
+    src: xdg_config/
+    dest: "{{ xdg_config_home }}/"
+    force: true
+
+- name: Ensure bashrc fragments are present
+  ansible.builtin.blockinfile:
+    path: "{{ home_dir }}/.bashrc"
+    create: true
+    mode: "0644"
+    prepend_newline: true
+    marker: "# {mark} ANSIBLE MANAGED BLOCK: {{ item.name }}"
+    block: "{{ item.block }}"
+  loop: "{{ dotfiles_bashrc_fragments }}"

@@ -1,0 +1,11 @@
+[user]
+	name = Yoshiki Matsuda
+	email = y_matsuda@fixstars.com
+[pull]
+	rebase = true
+	autostash = true
+[rebase]
+	autostash = true
+	autosquash = true
+[init]
+    defaultBranch = main
