@@ -208,33 +208,34 @@ function fish_command_timer_compute_cmd_duration_str
   echo $cmd_duration_str
 end
 
-function fish_command_timer_preexec -e fish_preexec
-  set -l command_end_time (date '+%s')
-  set -l now_str (fish_command_timer_print_time $command_end_time)
+# turn off preexec hook since mintty sometimes does not properly support it.
+# function fish_command_timer_preexec -e fish_preexec
+#   set -l command_end_time (date '+%s')
+#   set -l now_str (fish_command_timer_print_time $command_end_time)
 
-  # Compute timing string (e.g. [Oct 01 11:11PM])
-  set -l timing_str
-  set timing_str "[$now_str]"
-  set -l timing_str_length (fish_command_timer_strlen "$timing_str")
+#   # Compute timing string (e.g. [Oct 01 11:11PM])
+#   set -l timing_str
+#   set timing_str "[$now_str]"
+#   set -l timing_str_length (fish_command_timer_strlen "$timing_str")
 
-  # Compute timing string with color.
-  set -l timing_str_colored
-  if begin
-       set -q fish_command_date_color; and \
-       [ -n "$fish_command_date_color" ]
-     end
-    set timing_str_colored (set_color $fish_command_date_color)"$timing_str"(set_color normal)
-  else
-    set timing_str_colored "$timing_str"
-  end
+#   # Compute timing string with color.
+#   set -l timing_str_colored
+#   if begin
+#        set -q fish_command_date_color; and \
+#        [ -n "$fish_command_date_color" ]
+#      end
+#     set timing_str_colored (set_color $fish_command_date_color)"$timing_str"(set_color normal)
+#   else
+#     set timing_str_colored "$timing_str"
+#   end
 
-  # Move to the end of the line. This will NOT wrap to the next line.
-  echo -ne "\033["{$COLUMNS}"C"
-  # Move back output_length columns.
-  echo -ne "\033["(math $timing_str_length - 1)"D"
-  # Finally, print output.
-  echo -e "$timing_str_colored"
-end
+#   # Move to the end of the line. This will NOT wrap to the next line.
+#   echo -ne "\033["{$COLUMNS}"C"
+#   # Move back output_length columns.
+#   echo -ne "\033["(math $timing_str_length - 1)"D"
+#   # Finally, print output.
+#   echo -e "$timing_str_colored"
+# end
 
 # The fish_postexec event is fired after executing a command line.
 function fish_command_timer_postexec -e fish_postexec

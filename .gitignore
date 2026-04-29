@@ -1,6 +1,9 @@
 # The default root path for Ansible config files on the controller
 .ansible/
 
+# Local private vars for Ansible/template variables
+local.vars.yml
+
 # Retry files generated for failed Ansible playbook runs
 *.retry
 
@@ -9,3 +12,13 @@
 
 # Built Visual Studio Code Extensions
 *.vsix
+
+# Ignore fish universal variables
+files/xdg_config/fish/fish_variables
+
+# Ignore fish plugins
+files/xdg_config/fish/fish_plugins
+files/xdg_config/fish/conf.d/fzf.fish
+files/xdg_config/fish/conf.d/z.fish
+files/xdg_config/fish/functions/fisher.fish
+files/xdg_config/fish/functions/__*.fish

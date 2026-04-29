@@ -1,22 +1,43 @@
-- name: Copy dotfiles to home directory
-  ansible.builtin.copy:
-    src: files/
-    dest: "{{ home_dir }}/"
-    force: true
-    backup: true
+- name: Create symbolic links for dotfiles
+  ansible.builtin.include_tasks: symlink_entries.yml
+  vars:
+    dotfiles_link_source_path: "{{ home_dir }}/dotfiles/files/dotfiles"
+    dotfiles_link_dest_dir: "{{ home_dir }}"
+    dotfiles_link_hidden: true
+    dotfiles_link_file_type: any
+    dotfiles_link_backup_existing: true
 
-- name: Copy scripts to local bin
-  ansible.builtin.copy:
-    src: scripts/
-    dest: "{{ xdg_local_bin_dir }}/"
-    force: true
-    mode: "0755"
+- name: Check local templated dotfiles vars file
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/local.vars.yml"
+  register: dotfiles_local_vars_file
 
-- name: Copy XDG config files
-  ansible.builtin.copy:
-    src: xdg_config/
-    dest: "{{ xdg_config_home }}/"
-    force: true
+- name: Load local templated dotfiles vars
+  when: dotfiles_local_vars_file.stat.exists
+  no_log: true
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/local.vars.yml"
+
+- name: Render templated dotfiles into home directory
+  ansible.builtin.include_tasks: template_entries.yml
+  vars:
+    dotfiles_template_source_path: "{{ playbook_dir }}/files/templates"
+    dotfiles_template_dest_dir: "{{ home_dir }}"
+    dotfiles_template_hidden: true
+
+- name: Create symbolic links for scripts
+  ansible.builtin.include_tasks: symlink_entries.yml
+  vars:
+    dotfiles_link_source_path: "{{ home_dir }}/dotfiles/files/scripts"
+    dotfiles_link_dest_dir: "{{ xdg_local_bin_dir }}"
+    dotfiles_link_file_type: file
+
+- name: Create symbolic links for XDG config entries
+  ansible.builtin.include_tasks: symlink_entries.yml
+  vars:
+    dotfiles_link_source_path: "{{ home_dir }}/dotfiles/files/xdg_config"
+    dotfiles_link_dest_dir: "{{ xdg_config_home }}"
+    dotfiles_link_file_type: any
 
 - name: Ensure bashrc fragments are present
   ansible.builtin.blockinfile:

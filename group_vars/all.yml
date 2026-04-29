@@ -4,6 +4,7 @@ xdg_local_bin_dir: "{{ home_dir }}/.local/bin"
 xdg_data_home: "{{ home_dir }}/.local/share"
 xdg_cache_home: "{{ home_dir }}/.cache"
 local_tmp_dir: "{{ home_dir }}/tmp"
+dotfiles_repo_url: https://github.com/yosh-matsuda/dotfiles.git
 is_ubuntu: "{{ ansible_facts['distribution'] == 'Ubuntu' }}"
 is_macos: "{{ ansible_facts['distribution'] == 'MacOSX' }}"
 is_x86_64: "{{ ansible_facts['architecture'] == 'x86_64' }}"
@@ -33,6 +34,7 @@ pipx_packages:
   - compdb
   - invoke
 prerequisite_apt_packages:
+  - git
   - pipx
   - sysstat
   - tmux

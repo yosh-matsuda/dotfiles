@@ -8,47 +8,33 @@
 # for ssh logins, install and configure the libpam-umask package.
 #umask 022
 
-IsInteractiveTerminal() {
-    # if interactive shell
-    if [[ $- =~ i ]]; then
-        # if FD is a file descriptor that is associated with a terminal.
-        if test -t 1; then
-            return 0
-        fi
+PrependUniquePath() {
+    var_name="$1"
+    new_entry="$2"
+    eval current_value="\${$var_name}"
+
+    if [ -n "$current_value" ]; then
+        case ":$current_value:" in
+        *":$new_entry:"*) : ;; # already there
+        *) eval export "$var_name=\"$new_entry:$current_value\"" ;;
+        esac
+    else
+        eval export "$var_name=\"$new_entry\""
     fi
-    return 1
 }
 
 AddToPATH() {
-    if [ -n "$PATH" ]; then
-        case ":$PATH:" in
-        *":$1:"*) : ;; # already there
-        *) export PATH="$1:$PATH" ;;
-        esac
-    else
-        export PATH="$1"
-    fi
+    PrependUniquePath PATH "$1"
 }
 
 AddToLDPATH() {
-    if [ -n "$LD_LIBRARY_PATH" ]; then
-        case ":$LD_LIBRARY_PATH:" in
-        *":$1:"*) : ;; # already there
-        *) export LD_LIBRARY_PATH="$1:$LD_LIBRARY_PATH" ;;
-        esac
-    else
-        export LD_LIBRARY_PATH="$1"
-    fi
+    PrependUniquePath LD_LIBRARY_PATH "$1"
 }
 
 # export
 export EDITOR=vim
-if glxinfo >/dev/null 2>&1; then
-    if tty | grep pts >/dev/null 2>&1; then
-        export LIBGL_ALWAYS_INDIRECT=1
-    fi
-else
-    :
+if glxinfo >/dev/null 2>&1 && tty | grep pts >/dev/null 2>&1; then
+    export LIBGL_ALWAYS_INDIRECT=1
 fi
 
 # set PATH so it includes user's private bin if it exists
@@ -57,15 +43,15 @@ if [ -d "$HOME/bin" ]; then
 fi
 
 # brew
-if [ -f "/home/linuxbrew/.linuxbrew/bin/brew" ]; then
-    eval $(/home/linuxbrew/.linuxbrew/bin/brew shellenv)
-fi
-if [ -f "/opt/homebrew/bin/brew" ]; then
-    eval $(/opt/homebrew/bin/brew shellenv)
-fi
-if [ -f "/usr/local/bin/brew" ]; then
-    eval $(/usr/local/bin/brew shellenv)
-fi
+for brew_bin in \
+    "/home/linuxbrew/.linuxbrew/bin/brew" \
+    "/opt/homebrew/bin/brew" \
+    "/usr/local/bin/brew"
+do
+    if [ -f "$brew_bin" ]; then
+        eval "$($brew_bin shellenv)"
+    fi
+done
 
 # CUDA
 if [ -d "/usr/local/cuda/bin" ]; then
@@ -79,6 +65,17 @@ fi
 if [ -d "$HOME/.local/bin" ]; then
     AddToPATH "$HOME/.local/bin"
 fi
+
+IsInteractiveTerminal() {
+    # if interactive shell
+    if [[ $- =~ i ]]; then
+        # if FD is a file descriptor that is associated with a terminal.
+        if test -t 1; then
+            return 0
+        fi
+    fi
+    return 1
+}
 
 if IsInteractiveTerminal; then
     # run tmux (if ssh connected and not vscode and TMUX is not running yet)

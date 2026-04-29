@@ -4,3 +4,7 @@ fish_binary_path: >-
     brew_bin_dir ~ '/fish' if brew_binary_path is not none
     else 'fish'
   }}
+fish_plugins_file: "{{ fish_config_dir }}/fish_plugins"
+fish_plugins:
+  - jethrokuan/fzf
+  - jethrokuan/z

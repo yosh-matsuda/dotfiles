@@ -1,0 +1,21 @@
+- name: Find templates to render
+  ansible.builtin.set_fact:
+    dotfiles_template_sources: >-
+      {{
+        query('fileglob', dotfiles_template_source_path ~ '/*', wantlist=True)
+        + (
+          query('fileglob', dotfiles_template_source_path ~ '/.*', wantlist=True)
+          if dotfiles_template_hidden | default(false)
+          else []
+        )
+      }}
+
+- name: Render templates into destination directory
+  ansible.builtin.template:
+    src: "{{ item }}"
+    dest: "{{ dotfiles_template_dest_dir }}/{{ item | basename }}"
+    mode: "0644"
+    backup: true
+  loop: "{{ dotfiles_template_sources }}"
+  loop_control:
+    label: "{{ dotfiles_template_dest_dir }}/{{ item | basename }}"

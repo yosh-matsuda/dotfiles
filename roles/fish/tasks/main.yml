@@ -32,13 +32,29 @@
         mode: "0644"
 
 - name: Sync fish plugins
-  when: brew_binary_path is not none
-  ansible.builtin.command:
-    argv:
-      - "{{ fish_binary_path }}"
-      - -lc
-      - fisher update
-  environment:
-    HOME: "{{ home_dir }}"
-    XDG_CONFIG_HOME: "{{ xdg_config_home }}"
-    PATH: "{{ brew_bin_dir }}:{{ ansible_facts['env']['PATH'] }}"
+  when:
+    - brew_binary_path is not none
+  block:
+    - name: Check existing fish_plugins file
+      ansible.builtin.stat:
+        path: "{{ fish_plugins_file }}"
+      register: fish_plugins_file_stat
+    - name: Render fish_plugins file from vars
+      when: not fish_plugins_file_stat.stat.exists
+      ansible.builtin.copy:
+        dest: "{{ fish_plugins_file }}"
+        mode: "0644"
+        content: |
+          {% for plugin in fish_plugins %}
+          {{ plugin }}
+          {% endfor %}
+    - name: Fisher update
+      ansible.builtin.command:
+        argv:
+          - "{{ fish_binary_path }}"
+          - -lc
+          - fisher update
+      environment:
+        HOME: "{{ home_dir }}"
+        XDG_CONFIG_HOME: "{{ xdg_config_home }}"
+        PATH: "{{ brew_bin_dir }}:{{ ansible_facts['env']['PATH'] }}"

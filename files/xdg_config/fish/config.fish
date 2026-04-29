@@ -60,6 +60,52 @@ end
 # variables
 #
 set -x FISH_RUNNING 1
+set -g __dotfiles_repo $HOME/dotfiles
+
+function __dotfiles_prompt_status
+  if not type -q git
+    return
+  end
+
+  if not test -d $__dotfiles_repo/.git
+    return
+  end
+
+  set -l git_status (command git -C $__dotfiles_repo status --porcelain=v2 --branch 2>/dev/null)
+
+  if string match -qr '^u ' -- $git_status
+    printf '%s' 'dotfiles conflict'
+    return
+  end
+
+  if string match -qr '^(1|2|\?|!) ' -- $git_status
+    printf '%s' 'dotfiles dirty'
+    return
+  end
+
+  if string match -qr '^# branch\.ab \+[1-9][0-9]* -[0-9]+$' -- $git_status
+    printf '%s' 'dotfiles unpushed'
+  end
+end
+
+function __dotfiles_pull_on_startup
+  if not status --is-interactive
+    return
+  end
+
+  if not type -q git
+    return
+  end
+
+  if not test -d $__dotfiles_repo/.git
+    return
+  end
+
+  command git -C $__dotfiles_repo pull --rebase --autostash >/dev/null 2>&1 &
+  disown
+end
+
+__dotfiles_pull_on_startup
 
 #
 # fish-command-timer
