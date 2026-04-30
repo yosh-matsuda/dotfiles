@@ -3,6 +3,7 @@
 
 # Local private vars for Ansible/template variables
 local.vars.yml
+local.hosts.yml
 
 # Retry files generated for failed Ansible playbook runs
 *.retry

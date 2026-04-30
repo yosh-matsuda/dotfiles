@@ -31,14 +31,17 @@ $ ansible-galaxy collection install community.general
 Default:
 
 ```bash
-$ ansible-playbook -i hosts.yml site.yml --ask-become-pass
+$ cp local.hosts.yml.example local.hosts.yml
+$ ansible-playbook -i local.hosts.yml site.yml --ask-become-pass
 ```
 
 On Ubuntu 26.04 with sudo-rs, Ansible needs `ANSIBLE_BECOME_EXE=sudo.ws`:
 
 ```bash
-$ ANSIBLE_BECOME_EXE=sudo.ws ansible-playbook -i hosts.yml site.yml --ask-become-pass
+$ ANSIBLE_BECOME_EXE=sudo.ws ansible-playbook -i local.hosts.yml site.yml --ask-become-pass
 ```
+
+Inventory is managed locally in a Git-ignored `local.hosts.yml` copied from `local.hosts.yml.example`.
 
 Main settings live under [roles/dotfiles/files](roles/dotfiles/files). Package lists and shared variables are defined in [group_vars/all.yml](group_vars/all.yml).
 
