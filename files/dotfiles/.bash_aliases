@@ -1,5 +1,5 @@
 # common aliases
-alias sudo='sudo -E '
+alias sudo='sudo --preserve-env=PATH '
 alias vi='vim'
 alias cp='cp -i'
 alias mv='mv -i'
