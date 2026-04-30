@@ -28,10 +28,16 @@ $ ansible-galaxy collection install community.general
 
 ## Usage
 
-Default:
+First, copy the local example files and edit them for your environment.
 
 ```bash
 $ cp local.hosts.yml.example local.hosts.yml
+$ cp local.vars.yml.example local.vars.yml
+```
+
+Then run the playbook:
+
+```bash
 $ ansible-playbook -i local.hosts.yml site.yml --ask-become-pass
 ```
 
@@ -41,24 +47,6 @@ On Ubuntu 26.04 with sudo-rs, Ansible needs `ANSIBLE_BECOME_EXE=sudo.ws`:
 $ ANSIBLE_BECOME_EXE=sudo.ws ansible-playbook -i local.hosts.yml site.yml --ask-become-pass
 ```
 
-Inventory is managed locally in a Git-ignored `local.hosts.yml` copied from `local.hosts.yml.example`.
+Both `local.hosts.yml` and `local.vars.yml` are Git-ignored. Keep the example files as tracked templates and add your local inventory entries or private variables only to the copied files. `local.vars.yml` is used by templated dotfiles under [files/templates](files/templates), such as [files/templates/.gitconfig](files/templates/.gitconfig).
 
 Main settings live under [roles/dotfiles/files](roles/dotfiles/files). Package lists and shared variables are defined in [group_vars/all.yml](group_vars/all.yml).
-
-## Templated dotfiles
-
-Files placed under [files/templates](files/templates) are rendered with Ansible's template module and copied into the target home directory instead of being symlinked.
-
-Templated dotfiles can read private values from a Git-ignored [local.vars.yml.example](local.vars.yml.example) copied to local.vars.yml.
-
-For example, [files/templates/.gitconfig](files/templates/.gitconfig) reads these variables at playbook runtime:
-
--   `dotfiles_git_user_name`
--   `dotfiles_git_user_email`
-
-Create local.vars.yml next to site.yml before running Ansible.
-
-```yaml
-dotfiles_git_user_name: Your Name
-dotfiles_git_user_email: you@example.com
-```
