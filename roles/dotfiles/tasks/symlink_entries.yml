@@ -17,14 +17,12 @@
 
 - name: Back up existing destinations before relinking
   when: >-
-    dotfiles_link_backup_existing | default(false) and
-    item.stat.exists and
-    not item.stat.islnk | default(false)
+    dotfiles_link_backup_existing | default(false) and item.stat.exists and not item.stat.islnk | default(false)
   ansible.builtin.command:
     argv:
-      - mv
-      - "{{ dotfiles_link_dest_dir }}/{{ item.item.path | basename }}"
-      - "{{ dotfiles_link_dest_dir }}/{{ item.item.path | basename }}.ansible.bak.{{ lookup('pipe', 'date +%s%N') }}"
+    - mv
+    - "{{ dotfiles_link_dest_dir }}/{{ item.item.path | basename }}"
+    - "{{ dotfiles_link_dest_dir }}/{{ item.item.path | basename }}.ansible.bak.{{ lookup('pipe', 'date +%s%N') }}"
   loop: "{{ dotfiles_link_destinations.results }}"
   loop_control:
     label: "{{ dotfiles_link_dest_dir }}/{{ item.item.path | basename }}"

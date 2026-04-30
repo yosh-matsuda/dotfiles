@@ -24,57 +24,57 @@
 - name: Install Homebrew on Linux
   when: is_ubuntu and not brew_binary_stat.stat.exists
   block:
-    - name: Create Homebrew directories
-      become: true
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        owner: "{{ brew_linux_owner }}"
-        group: "{{ brew_linux_owner }}"
-        mode: "0755"
-      loop:
-        - /home/linuxbrew
-        - "{{ brew_prefix_path }}"
-        - "{{ brew_prefix_path }}/bin"
-    - name: Check out Homebrew repository on WSL
-      when: brew_is_wsl
-      ansible.builtin.git:
-        repo: https://github.com/Homebrew/brew
-        dest: "{{ brew_repository_path }}"
-        depth: 1
-        update: no
-    - name: Check out Homebrew repository on Linux
-      when: not brew_is_wsl
-      become: true
-      become_user: linuxbrew
-      ansible.builtin.git:
-        repo: https://github.com/Homebrew/brew
-        dest: "{{ brew_repository_path }}"
-        depth: 1
-        update: no
-      environment:
-        HOME: /home/linuxbrew
-    - name: Link brew binary
-      become: true
-      ansible.builtin.file:
-        src: ../Homebrew/bin/brew
-        dest: "{{ brew_binary_path }}"
-        state: link
-        owner: "{{ brew_linux_owner }}"
-        group: "{{ brew_linux_owner }}"
+  - name: Create Homebrew directories
+    become: true
+    ansible.builtin.file:
+      path: "{{ item }}"
+      state: directory
+      owner: "{{ brew_linux_owner }}"
+      group: "{{ brew_linux_owner }}"
+      mode: "0755"
+    loop:
+    - /home/linuxbrew
+    - "{{ brew_prefix_path }}"
+    - "{{ brew_prefix_path }}/bin"
+  - name: Check out Homebrew repository on WSL
+    when: brew_is_wsl
+    ansible.builtin.git:
+      repo: https://github.com/Homebrew/brew
+      dest: "{{ brew_repository_path }}"
+      depth: 1
+      update: no
+  - name: Check out Homebrew repository on Linux
+    when: not brew_is_wsl
+    become: true
+    become_user: linuxbrew
+    ansible.builtin.git:
+      repo: https://github.com/Homebrew/brew
+      dest: "{{ brew_repository_path }}"
+      depth: 1
+      update: no
+    environment:
+      HOME: /home/linuxbrew
+  - name: Link brew binary
+    become: true
+    ansible.builtin.file:
+      src: ../Homebrew/bin/brew
+      dest: "{{ brew_binary_path }}"
+      state: link
+      owner: "{{ brew_linux_owner }}"
+      group: "{{ brew_linux_owner }}"
 
 - name: Install Homebrew on macOS
   when: is_macos and not brew_binary_stat.stat.exists
   block:
-    - name: Download Homebrew package
-      ansible.builtin.get_url:
-        url: https://github.com/Homebrew/brew/releases/latest/download/Homebrew.pkg
-        dest: "{{ brew_pkg_path }}"
-        mode: "0644"
-    - name: Install Homebrew package
-      become: true
-      ansible.builtin.command:
-        cmd: installer -pkg {{ brew_pkg_path }} -target /
+  - name: Download Homebrew package
+    ansible.builtin.get_url:
+      url: https://github.com/Homebrew/brew/releases/latest/download/Homebrew.pkg
+      dest: "{{ brew_pkg_path }}"
+      mode: "0644"
+  - name: Install Homebrew package
+    become: true
+    ansible.builtin.command:
+      cmd: installer -pkg {{ brew_pkg_path }} -target /
 
 - name: Refresh Homebrew installation state
   when: brew_binary_path is not none

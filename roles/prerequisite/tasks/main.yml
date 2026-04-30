@@ -11,79 +11,78 @@
 - name: Add current user to docker group
   when: ansible_facts['system'] == 'Linux'
   block:
-    - name: Check docker group
-      ansible.builtin.getent:
-        database: group
-        key: docker
-        fail_key: false
-      register: docker_group
-    - name: Add current user to docker group
-      become: true
-      when: >-
-        docker_group.ansible_facts.getent_group is defined and
-        docker_group.ansible_facts.getent_group.get('docker') is not none
-      ansible.builtin.user:
-        name: "{{ ansible_facts['user_id'] }}"
-        groups: docker
-        append: yes
+  - name: Check docker group
+    ansible.builtin.getent:
+      database: group
+      key: docker
+      fail_key: false
+    register: docker_group
+  - name: Add current user to docker group
+    become: true
+    when: >-
+      docker_group.ansible_facts.getent_group is defined and docker_group.ansible_facts.getent_group.get('docker') is not none
+    ansible.builtin.user:
+      name: "{{ ansible_facts['user_id'] }}"
+      groups: docker
+      append: yes
 
 - name: Create XDG dir
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
   loop:
-    - "{{ local_tmp_dir }}"
-    - "{{ xdg_config_home }}"
-    - "{{ xdg_local_bin_dir }}"
-    - "{{ xdg_data_home }}"
-    - "{{ xdg_cache_home }}"
+  - "{{ local_tmp_dir }}"
+  - "{{ xdg_config_home }}"
+  - "{{ xdg_local_bin_dir }}"
+  - "{{ xdg_data_home }}"
+  - "{{ xdg_cache_home }}"
 
 - name: Manage dotfiles repository in home directory
   block:
-    - name: Check dotfiles repository directory
-      ansible.builtin.stat:
-        path: "{{ home_dir }}/dotfiles"
-      register: dotfiles_dir
+  - name: Check dotfiles repository directory
+    ansible.builtin.stat:
+      path: "{{ home_dir }}/dotfiles"
+    register: dotfiles_dir
 
-    - name: Check dotfiles git directory
-      ansible.builtin.stat:
-        path: "{{ home_dir }}/dotfiles/.git"
-      register: dotfiles_git_dir
+  - name: Check dotfiles git directory
+    ansible.builtin.stat:
+      path: "{{ home_dir }}/dotfiles/.git"
+    register: dotfiles_git_dir
 
-    - name: Fail when dotfiles path exists but is not a git repository
-      when: dotfiles_dir.stat.exists and not dotfiles_git_dir.stat.exists
-      ansible.builtin.fail:
-        msg: "{{ home_dir }}/dotfiles exists but is not a git repository"
+  - name: Fail when dotfiles path exists but is not a git repository
+    when: dotfiles_dir.stat.exists and not dotfiles_git_dir.stat.exists
+    ansible.builtin.fail:
+      msg: "{{ home_dir }}/dotfiles exists but is not a git repository"
 
-    - name: Clone dotfiles repository
-      when: not dotfiles_git_dir.stat.exists
-      no_log: true
-      ansible.builtin.command:
-        argv:
-          - git
-          - clone
-          - "{{ dotfiles_repo_url }}"
-          - "{{ home_dir }}/dotfiles"
+  - name: Clone dotfiles repository
+    when: not dotfiles_git_dir.stat.exists
+    no_log: true
+    ansible.builtin.command:
+      argv:
+      - git
+      - clone
+      - "{{ dotfiles_repo_url }}"
+      - "{{ home_dir }}/dotfiles"
 
-    - name: Set dotfiles repository origin URL
-      when: dotfiles_git_dir.stat.exists
-      ansible.builtin.command:
-        argv:
-          - git
-          - -C
-          - "{{ home_dir }}/dotfiles"
-          - remote
-          - set-url
-          - origin
-          - "{{ dotfiles_repo_url }}"
+  - name: Set dotfiles repository origin URL
+    when: dotfiles_git_dir.stat.exists
+    ansible.builtin.command:
+      argv:
+      - git
+      - -C
+      - "{{ home_dir }}/dotfiles"
+      - remote
+      - set-url
+      - origin
+      - "{{ dotfiles_repo_url }}"
 
-    - name: Pull dotfiles repository with rebase
-      when: dotfiles_git_dir.stat.exists
-      ansible.builtin.command:
-        argv:
-          - git
-          - -C
-          - "{{ home_dir }}/dotfiles"
-          - pull
-          - --rebase
-          - --autostash
+  - name: Pull dotfiles repository with rebase
+    when: dotfiles_git_dir.stat.exists
+    ansible.builtin.command:
+      argv:
+      - git
+      - -C
+      - "{{ home_dir }}/dotfiles"
+      - pull
+      - --rebase
+      - --autostash

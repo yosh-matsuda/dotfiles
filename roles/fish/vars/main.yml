@@ -6,5 +6,5 @@ fish_binary_path: >-
   }}
 fish_plugins_file: "{{ fish_config_dir }}/fish_plugins"
 fish_plugins:
-  - jethrokuan/fzf
-  - jethrokuan/z
+- jethrokuan/fzf
+- jethrokuan/z

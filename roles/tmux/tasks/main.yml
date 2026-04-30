@@ -6,34 +6,34 @@
 
 - name: Check out TPM
   block:
-    - name: Resolve latest TPM v tag
-      ansible.builtin.shell:
-        cmd: |
-          set -euo pipefail
-          git ls-remote --tags --refs https://github.com/tmux-plugins/tpm \
-            | python3 -c '
-          import re
-          import sys
+  - name: Resolve latest TPM v tag
+    ansible.builtin.shell:
+      cmd: |
+        set -euo pipefail
+        git ls-remote --tags --refs https://github.com/tmux-plugins/tpm \
+          | python3 -c '
+        import re
+        import sys
 
-          tags = []
-          for line in sys.stdin:
-              match = re.search(r"refs/tags/(v\d+\.\d+\.\d+)$", line.strip())
-              if match:
-                  tag = match.group(1)
-                  version = tuple(int(part) for part in tag[1:].split("."))
-                  tags.append((version, tag))
+        tags = []
+        for line in sys.stdin:
+            match = re.search(r"refs/tags/(v\d+\.\d+\.\d+)$", line.strip())
+            if match:
+                tag = match.group(1)
+                version = tuple(int(part) for part in tag[1:].split("."))
+                tags.append((version, tag))
 
-          if not tags:
-              raise SystemExit("No v-prefixed TPM tags found")
+        if not tags:
+            raise SystemExit("No v-prefixed TPM tags found")
 
-          print(max(tags)[1])
-          '
-      register: tpm_latest_tag
-      changed_when: false
-    - name: Check out TPM from latest vX.X.X tag
-      ansible.builtin.git:
-        repo: https://github.com/tmux-plugins/tpm
-        dest: "{{ home_dir }}/.tmux/plugins/tpm"
-        version: "{{ tpm_latest_tag.stdout }}"
-        depth: 1
-        update: yes
+        print(max(tags)[1])
+        '
+    register: tpm_latest_tag
+    changed_when: false
+  - name: Check out TPM from latest vX.X.X tag
+    ansible.builtin.git:
+      repo: https://github.com/tmux-plugins/tpm
+      dest: "{{ home_dir }}/.tmux/plugins/tpm"
+      version: "{{ tpm_latest_tag.stdout }}"
+      depth: 1
+      update: yes
