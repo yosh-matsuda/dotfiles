@@ -39,5 +39,10 @@ prerequisite_apt_packages:
 - sysstat
 - tmux
 - curl
+# For C++ development
+- build-essential
 - cmake
 - zip
+- pkg-config
+- ninja-build
+- libicu-dev
