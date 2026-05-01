@@ -39,3 +39,4 @@ prerequisite_apt_packages:
 - sysstat
 - tmux
 - curl
+- cmake
