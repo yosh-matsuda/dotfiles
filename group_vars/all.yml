@@ -40,3 +40,4 @@ prerequisite_apt_packages:
 - tmux
 - curl
 - cmake
+- zip
