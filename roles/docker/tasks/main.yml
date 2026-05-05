@@ -1,0 +1,133 @@
+- name: Install and configure Docker on WSL
+  when: is_wsl
+  become: true
+  block:
+  - name: Check docker binary
+    ansible.builtin.stat:
+      path: /usr/bin/docker
+    register: docker_binary_stat
+
+  - name: Download docker install script
+    when: not docker_binary_stat.stat.exists
+    ansible.builtin.get_url:
+      url: https://get.docker.com
+      dest: "{{ docker_install_script_path }}"
+      mode: "0755"
+
+  - name: Install docker
+    when: not docker_binary_stat.stat.exists
+    ansible.builtin.command:
+      argv:
+      - sh
+      - "{{ docker_install_script_path }}"
+
+  - name: Update docker packages
+    when: docker_binary_stat.stat.exists
+    ansible.builtin.apt:
+      name: "{{ docker_apt_packages }}"
+      state: latest
+      update_cache: yes
+
+  - name: Add current user to docker group
+    ansible.builtin.user:
+      name: "{{ ansible_facts['user_id'] }}"
+      groups: docker
+      append: yes
+
+  - name: Setup NVIDIA container runtime
+    when: "'nvidia_gpu' in group_names"
+    block:
+    - name: Install NVIDIA container toolkit prerequisites
+      ansible.builtin.apt:
+        name: "{{ docker_nvidia_apt_prerequisites }}"
+        state: present
+        update_cache: yes
+
+    - name: Ensure NVIDIA keyring directory exists
+      ansible.builtin.file:
+        path: /usr/share/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Add NVIDIA container toolkit keyring
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          curl -fsSL {{ docker_nvidia_gpg_key_url }} \
+            | gpg --dearmor -o {{ docker_nvidia_keyring_path }}
+        creates: "{{ docker_nvidia_keyring_path }}"
+
+    - name: Add NVIDIA container toolkit repository
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          curl -fsSL {{ docker_nvidia_repository_list_url }} \
+            | sed 's#deb https://#deb [signed-by={{ docker_nvidia_keyring_path }}] https://#g' \
+            > {{ docker_nvidia_sources_list_path }}
+
+    - name: Install NVIDIA container toolkit
+      ansible.builtin.apt:
+        name: "{{ docker_nvidia_apt_packages }}"
+        state: latest
+        update_cache: yes
+
+    - name: Configure nvidia runtime
+      ansible.builtin.command:
+        argv:
+        - /usr/bin/nvidia-ctk
+        - runtime
+        - configure
+        - --runtime=docker
+
+  - name: Ensure docker daemon configuration exists
+    ansible.builtin.copy:
+      dest: /etc/docker/daemon.json
+      content: "{}"
+      force: no
+      owner: root
+      group: root
+      mode: "0644"
+
+  - name: Load docker daemon configuration
+    ansible.builtin.slurp:
+      src: /etc/docker/daemon.json
+    register: docker_daemon_json
+
+  - name: Merge docker daemon configuration
+    ansible.builtin.set_fact:
+      docker_daemon_config_merged: >-
+        {{
+          (docker_daemon_json.content | b64decode | from_json)
+          | combine(docker_daemon_config, recursive=True)
+          | combine(docker_nvidia_daemon_config, recursive=True)
+          if 'nvidia_gpu' in group_names
+          else (docker_daemon_json.content | b64decode | from_json)
+            | combine(docker_daemon_config, recursive=True)
+        }}
+
+  - name: Write docker daemon configuration
+    ansible.builtin.copy:
+      content: "{{ docker_daemon_config_merged | to_nice_json }}"
+      dest: /etc/docker/daemon.json
+      owner: root
+      group: root
+      mode: "0644"
+
+  - name: Restart docker
+    ansible.builtin.systemd_service:
+      name: docker
+      state: restarted
+
+  - name: Reset connection
+    ansible.builtin.meta: reset_connection
+
+  - name: Configure docker cleanup cron on WSL
+    ansible.builtin.cron:
+      name: docker cleanup
+      minute: "{{ docker_cleanup_cron.minute }}"
+      hour: "{{ docker_cleanup_cron.hour }}"
+      user: root
+      job: "{{ docker_cleanup_cron.job }}"
+      cron_file: docker_cleanup

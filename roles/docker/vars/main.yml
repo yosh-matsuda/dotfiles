@@ -1,0 +1,37 @@
+docker_install_script_path: /tmp/get-docker.sh
+docker_apt_packages:
+- docker-ce
+- docker-ce-cli
+- containerd.io
+- docker-buildx-plugin
+- docker-compose-plugin
+docker_nvidia_apt_prerequisites:
+- ca-certificates
+- curl
+- gnupg2
+docker_nvidia_apt_packages:
+- nvidia-container-toolkit
+docker_nvidia_gpg_key_url: https://nvidia.github.io/libnvidia-container/gpgkey
+docker_nvidia_repository_list_url: https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list
+docker_nvidia_keyring_path: /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+docker_nvidia_sources_list_path: /etc/apt/sources.list.d/nvidia-container-toolkit.list
+docker_daemon_config:
+  registry-mirrors:
+  - https://mirror.gcr.io
+  bip: 172.16.0.1/16
+  default-address-pools:
+  - base: 10.10.0.0/16
+    size: 24
+  log-driver: json-file
+  log-opts:
+    max-size: 10m
+    max-file: "10"
+docker_nvidia_daemon_config:
+  runtimes:
+    nvidia:
+      args: []
+      path: nvidia-container-runtime
+docker_cleanup_cron:
+  minute: "0"
+  hour: "0"
+  job: /usr/bin/docker system prune -f; /usr/bin/docker system prune -af --filter 'until=720h'

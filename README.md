@@ -10,6 +10,7 @@ This repository applies shell settings, XDG config files, and CLI tools on Ubunt
 -   XDG config files
 -   Homebrew packages
 -   pipx packages
+-   Docker on WSL
 -   tmux plugins
 -   fish and fisher
 

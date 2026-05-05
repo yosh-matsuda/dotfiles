@@ -1,0 +1,75 @@
+- name: Install Docker
+  hosts: all
+  become: true
+  tasks:
+    - name: Setup docker
+      block:
+        - name: Get docker installation script
+          ansible.builtin.get_url:
+            url: https://get.docker.com
+            dest: /tmp/get-docker.sh
+        - name: Install docker
+          command: sh /tmp/get-docker.sh
+        - name: Add user to docker group
+          ansible.builtin.user:
+            name: "{{ ansible_user }}"
+            groups: docker
+            append: true
+        - name: Setup NVIDIA Container Runtime
+          when: inventory_hostname in groups["nvidia_gpu"]
+          block:
+            - name: Add nvidia-container-toolkit keyring
+              ansible.builtin.get_url:
+                url: https://nvidia.github.io/libnvidia-container/gpgkey
+                dest: /etc/apt/keyrings/nvidia-container-toolkit-keyring.asc
+            - name: Add nvidia-container-toolkit repository
+              ansible.builtin.apt_repository:
+                repo: deb [signed-by=/etc/apt/keyrings/nvidia-container-toolkit-keyring.asc] https://nvidia.github.io/libnvidia-container/stable/deb/amd64 /
+                filename: nvidia-container-toolkit
+            - name: Install NVIDIA container toolkit
+              ansible.builtin.apt:
+                name: nvidia-container-toolkit
+            - name: Configure nvidia runtime
+              command: /usr/bin/nvidia-ctk runtime configure --runtime=docker
+        - name: Configure docker daemon configuration
+          block:
+            - name: Create daemon.json if file does not exist
+              ansible.builtin.copy:
+                dest: /etc/docker/daemon.json
+                content: "{}"
+                force: no
+                owner: root
+                group: root
+                mode: 0644
+            - name: Load daemon.json
+              slurp:
+                src: /etc/docker/daemon.json
+              register: daemon_json
+            - name: Append settings to daemon.json
+              ansible.builtin.set_fact:
+                daemon_json: "{{ daemon_json.content|b64decode|from_json | default([]) | combine({'registry-mirrors':['https://mirror.gcr.io'],'bip':'172.16.0.1/16','default-address-pools':[{'base':'10.10.0.0/16','size':24}],'log-driver':'json-file','log-opts':{'max-size':'10m','max-file':'10'}}) }}"
+            - name: Append nvidia settings to daemon.json
+              when: inventory_hostname in groups["nvidia_gpu"]
+              ansible.builtin.set_fact:
+                daemon_json: "{{ daemon_json | combine({'exec-opts':['native.cgroupdriver=cgroupfs'],'runtimes':{'nvidia':{'args':[],'path':'nvidia-container-runtime'}}}) }}"
+            - name: Write daemon.json
+              ansible.builtin.copy:
+                content: "{{ daemon_json | to_nice_json }}"
+                dest: /etc/docker/daemon.json
+                owner: root
+                group: root
+                mode: 0644
+        - name: Restart docker
+          ansible.builtin.systemd_service:
+            name: docker
+            state: restarted
+        - name: Reset connection
+          ansible.builtin.meta: reset_connection
+    - name: Creates a cron file for docker cleanup
+      ansible.builtin.cron:
+        name: docker cleanup
+        minute: "0"
+        hour: "0"
+        user: root
+        job: "/usr/bin/docker system prune -f; /usr/bin/docker system prune -af --filter 'until=720h'"
+        cron_file: docker_cleanup

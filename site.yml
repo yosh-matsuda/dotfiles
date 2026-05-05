@@ -10,5 +10,6 @@
   - pipx
   - dotfiles
   - brew
+  - docker
   - tmux
   - fish
