@@ -10,7 +10,7 @@
   - name: Download docker install script
     when: not docker_binary_stat.stat.exists
     ansible.builtin.get_url:
-      url: https://get.docker.com
+      url: "{{ docker_install_script_url }}"
       dest: "{{ docker_install_script_path }}"
       mode: "0755"
 

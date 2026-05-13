@@ -1,3 +1,4 @@
+docker_install_script_url: https://get.docker.com
 docker_install_script_path: /tmp/get-docker.sh
 docker_apt_packages:
 - docker-ce
