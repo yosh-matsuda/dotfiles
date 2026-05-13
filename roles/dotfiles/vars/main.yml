@@ -40,6 +40,13 @@ dotfiles_bashrc_fragments:
       if [[ ${FISH_RUNNING-0} -eq 0 ]] && IsInteractiveTerminal; then
           # if not vscode, run fish
           if type fish 2>/dev/null 1>/dev/null; then
+              # render /etc/issue or else fall back to kernel/system info
+              agetty --show-issue 2>/dev/null || uname -a
+
+              # message of the day
+              for motd in /run/motd.dynamic /etc/motd; do
+                  if [ -s "$motd" ]; then cat "$motd"; break; fi
+              done
               exec fish
           fi
       fi
