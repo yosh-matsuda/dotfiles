@@ -36,6 +36,16 @@
     - /home/linuxbrew
     - "{{ brew_prefix_path }}"
     - "{{ brew_prefix_path }}/bin"
+  - name: Create linuxbrew Ansible temporary directory
+    when: not brew_is_wsl
+    become: true
+    ansible.builtin.file:
+      path: "{{ brew_exec_home }}/.ansible/tmp"
+      state: directory
+      owner: "{{ brew_linux_owner }}"
+      group: "{{ brew_linux_owner }}"
+      mode: "0700"
+    register: brew_linux_ansible_tmp_dir
   - name: Check out Homebrew repository on WSL
     when: brew_is_wsl
     ansible.builtin.git:
@@ -46,12 +56,14 @@
   - name: Check out Homebrew repository on Linux
     when: not brew_is_wsl
     become: true
-    become_user: linuxbrew
+    become_user: "{{ brew_linux_owner }}"
     ansible.builtin.git:
       repo: https://github.com/Homebrew/brew
       dest: "{{ brew_repository_path }}"
       depth: 1
       update: no
+    environment:
+      HOME: "{{ brew_exec_home }}"
   - name: Link brew binary
     become: true
     ansible.builtin.file:
@@ -101,3 +113,13 @@
     state: present
   environment:
     HOME: "{{ brew_exec_home }}"
+
+- name: Remove linuxbrew Ansible temporary directory
+  when:
+  - is_ubuntu
+  - brew_linux_ansible_tmp_dir is defined
+  - brew_linux_ansible_tmp_dir.changed
+  become: true
+  ansible.builtin.file:
+    path: "{{ brew_exec_home }}/.ansible"
+    state: absent
