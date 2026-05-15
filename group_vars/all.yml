@@ -11,11 +11,12 @@ is_x86_64: "{{ ansible_facts['architecture'] == 'x86_64' }}"
 is_arm64: "{{ ansible_facts['architecture'] == 'arm64' }}"
 is_wsl: "{{ is_ubuntu and 'WSL' in ansible_facts['kernel'] }}"
 brew_linux_prerequisite_packages:
+- acl
 - build-essential
-- procps
 - curl
 - file
 - git
+- procps
 brew_packages:
 - fish
 - fzf

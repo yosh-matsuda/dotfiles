@@ -52,8 +52,6 @@
       dest: "{{ brew_repository_path }}"
       depth: 1
       update: no
-    environment:
-      HOME: /home/linuxbrew
   - name: Link brew binary
     become: true
     ansible.builtin.file:
