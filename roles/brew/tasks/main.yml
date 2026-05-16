@@ -36,6 +36,7 @@
     - /home/linuxbrew
     - "{{ brew_prefix_path }}"
     - "{{ brew_prefix_path }}/bin"
+    - "{{ brew_prefix_path }}/sbin"
   - name: Create linuxbrew Ansible temporary directory
     when: not brew_is_wsl
     become: true
@@ -96,11 +97,13 @@
   when: brew_binary_path is not none and brew_binary_stat.stat.exists
   become: "{{ brew_exec_user != ansible_facts['user_id'] }}"
   become_user: "{{ brew_exec_user if brew_exec_user != ansible_facts['user_id'] else omit }}"
-  ansible.builtin.command:
-    cmd: "{{ brew_binary_path }} doctor"
+  ansible.builtin.shell:
+    cmd: |
+      eval "$({{ brew_binary_path }} shellenv)"
+      {{ brew_binary_path }} doctor
+    chdir: "{{ brew_exec_home }}"
   environment:
     HOME: "{{ brew_exec_home }}"
-    PATH: "{{ brew_bin_dir }}:{{ ansible_facts['env']['PATH'] }}"
   changed_when: false
 
 - name: Install Homebrew packages
