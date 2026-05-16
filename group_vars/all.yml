@@ -22,6 +22,8 @@ brew_packages:
 - fzf
 - bat
 - eza
+- node
+- fastfetch
 brew_binary_path: >-
   {{
     '/home/linuxbrew/.linuxbrew/bin/brew' if is_ubuntu

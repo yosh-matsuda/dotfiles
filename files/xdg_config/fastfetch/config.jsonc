@@ -1,0 +1,41 @@
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/master/doc/json_schema.json",
+  "logo": {
+    "type": "none"
+  },
+  "display": {
+    "separator": " ",
+    "key": {
+      "width": 20,
+      "type": "string"
+    }
+  },
+  "modules": [
+    {
+      "type": "command",
+      "key": "Host",
+      "text": "hostname -f 2>/dev/null || hostname"
+    },
+    "os",
+    {
+      "type": "host",
+      "key": "Machine",
+      "format": "{name}"
+    },
+    "kernel",
+    {
+      "type": "cpu",
+      "temp": true
+    },
+    {
+      "type": "gpu",
+      "temp": true
+    },
+    "memory",
+    "disk",
+    "localip",
+    "uptime",
+    "users",
+    "break"
+  ]
+}
