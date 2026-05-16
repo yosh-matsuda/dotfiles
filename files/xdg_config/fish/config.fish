@@ -62,16 +62,24 @@ end
 set -x FISH_RUNNING 1
 set -g __dotfiles_repo $HOME/dotfiles
 
-function __dotfiles_prompt_status
+function __dotfiles_repo_available
   if not type -q git
-    return
+    return 1
   end
 
   if not test -d $__dotfiles_repo/.git
-    return
+    return 1
   end
+end
 
-  set -l git_status (command git -C $__dotfiles_repo status --porcelain=v2 --branch 2>/dev/null)
+function __dotfiles_git_status
+  command git -C $__dotfiles_repo status --porcelain=v2 --branch 2>/dev/null
+end
+
+function __dotfiles_classify_status --argument-names git_status
+  if test -z "$git_status"
+    return 1
+  end
 
   if string match -qr '^u ' -- $git_status
     printf '%s' 'dotfiles conflict'
@@ -83,9 +91,20 @@ function __dotfiles_prompt_status
     return
   end
 
+  if string match -qr '^# branch\.ab \+0 -[1-9][0-9]*$' -- $git_status
+    printf '%s' 'dotfiles behind'
+    return
+  end
+
   if string match -qr '^# branch\.ab \+[1-9][0-9]* -[0-9]+$' -- $git_status
     printf '%s' 'dotfiles unpushed'
   end
+end
+
+function __dotfiles_prompt_status
+  __dotfiles_repo_available; or return
+
+  __dotfiles_classify_status (__dotfiles_git_status)
 end
 
 function __dotfiles_pull_on_startup
@@ -93,15 +112,38 @@ function __dotfiles_pull_on_startup
     return
   end
 
-  if not type -q git
+  __dotfiles_repo_available; or return
+
+  # Skip auto-pull unless the worktree is clean and conflict-free.
+  set -l git_status (__dotfiles_git_status)
+  or return
+
+  set -l dotfiles_status (__dotfiles_classify_status $git_status)
+  if test "$dotfiles_status" = 'dotfiles conflict'
     return
   end
 
-  if not test -d $__dotfiles_repo/.git
+  if test "$dotfiles_status" = 'dotfiles dirty'
     return
   end
 
-  command git -C $__dotfiles_repo pull --rebase --autostash >/dev/null 2>&1 &
+  # Skip repositories without a tracking upstream branch.
+  if not command git -C $__dotfiles_repo rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1
+    return
+  end
+
+  # Refresh remote refs before deciding whether a fast-forward is possible.
+  command git -C $__dotfiles_repo fetch --quiet --prune >/dev/null 2>&1
+  or return
+
+  # Only pull when local is strictly behind upstream and not ahead.
+  set -l dotfiles_status_after_fetch (__dotfiles_classify_status (__dotfiles_git_status))
+  if test "$dotfiles_status_after_fetch" != 'dotfiles behind'
+    return
+  end
+
+  # Fast-forward in the background so shell startup stays responsive.
+  command git -C $__dotfiles_repo pull --ff-only --quiet >/dev/null 2>&1 &
   disown
 end
 

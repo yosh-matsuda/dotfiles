@@ -1,15 +1,19 @@
 function fish_right_prompt --description '右側に pwd と git status を表示'
   set -l dotfiles_status (__dotfiles_prompt_status)
   if test -n "$dotfiles_status"
+    set -l dotfiles_label $dotfiles_status
     switch $dotfiles_status
       case 'dotfiles conflict'
         set_color red
       case 'dotfiles dirty'
         set_color yellow
+      case 'dotfiles behind'
+        set_color cyan
+        set dotfiles_label 'update available'
       case 'dotfiles unpushed'
         set_color blue
     end
-    printf '[%s] ' "$dotfiles_status"
+    printf '[%s] ' "$dotfiles_label"
     set_color normal
   end
   prompt_hostname
