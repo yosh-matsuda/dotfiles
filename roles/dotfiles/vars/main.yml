@@ -37,8 +37,8 @@ dotfiles_bashrc_fragments:
         return 1
     }
 
-    if [[ ${FISH_RUNNING-0} -eq 0 ]] && IsInteractiveTerminal; then
-        # if not vscode, run fish
+    # if not vscode, run fish in interactive bash
+    if [[ ${FISH_RUNNING:-0} -eq 0 ]] && [[ ${TERM_PROGRAM:-} != vscode ]] && IsInteractiveTerminal; then
         if type fish 2>/dev/null 1>/dev/null; then
             exec fish
         fi
