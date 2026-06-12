@@ -76,27 +76,27 @@ function __dotfiles_git_status
   command git -C $__dotfiles_repo status --porcelain=v2 --branch 2>/dev/null
 end
 
-function __dotfiles_classify_status --argument-names git_status
-  if test -z "$git_status"
+function __dotfiles_classify_status
+  if test (count $argv) -eq 0
     return 1
   end
 
-  if string match -qr '^u ' -- $git_status
+  if string match -qr '^u ' -- $argv
     printf '%s' 'dotfiles conflict'
     return
   end
 
-  if string match -qr '^(1|2|\?|!) ' -- $git_status
+  if string match -qr '^(1|2|\?|!) ' -- $argv
     printf '%s' 'dotfiles dirty'
     return
   end
 
-  if string match -qr '^# branch\.ab \+0 -[1-9][0-9]*$' -- $git_status
+  if string match -qr '^# branch\.ab \+0 -[1-9][0-9]*$' -- $argv
     printf '%s' 'dotfiles behind'
     return
   end
 
-  if string match -qr '^# branch\.ab \+[1-9][0-9]* -[0-9]+$' -- $git_status
+  if string match -qr '^# branch\.ab \+[1-9][0-9]* -[0-9]+$' -- $argv
     printf '%s' 'dotfiles unpushed'
   end
 end
