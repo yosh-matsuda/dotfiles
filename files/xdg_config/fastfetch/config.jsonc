@@ -13,29 +13,52 @@
   "modules": [
     {
       "type": "command",
-      "key": "Host",
+      "key": "  Host",
       "text": "hostname -f 2>/dev/null || hostname"
     },
-    "os",
+    {
+      "type": "os",
+      "key": "  OS"
+    },
     {
       "type": "host",
-      "key": "Machine",
+      "key": "  Machine",
       "format": "{name}"
     },
-    "kernel",
+    {
+      "type": "kernel",
+      "key": "  Kernel"
+    },
     {
       "type": "cpu",
+      "key": "  CPU",
       "temp": true
     },
     {
       "type": "gpu",
+      "key": "  GPU",
       "temp": true
     },
-    "memory",
-    "disk",
-    "localip",
-    "uptime",
-    "users",
+    {
+      "type": "memory",
+      "key": "  Memory"
+    },
+    {
+      "type": "disk",
+      "key": "  Disk"
+    },
+    {
+      "type": "localip",
+      "key": "  Local IP"
+    },
+    {
+      "type": "uptime",
+      "key": "  Uptime"
+    },
+    {
+      "type": "users",
+      "key": "  Users"
+    },
     "break"
   ]
 }
