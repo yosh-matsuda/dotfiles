@@ -43,6 +43,9 @@ prerequisite_apt_packages:
 - sysstat
 - tmux
 - curl
+- ripgrep
+- jq
+- btop
 # For C++ development
 - build-essential
 - cmake
