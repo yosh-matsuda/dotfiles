@@ -10,6 +10,7 @@
 - name: Check local templated dotfiles vars file
   ansible.builtin.stat:
     path: "{{ playbook_dir }}/local.vars.yml"
+  delegate_to: localhost
   register: dotfiles_local_vars_file
 
 - name: Load local templated dotfiles vars
