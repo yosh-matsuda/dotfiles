@@ -17,5 +17,5 @@ prompt_new_tab_name = false
 delivery = "terminal"
 
 [theme]
-name = "terminal"
+name = "dracula"
 auto_switch = false
