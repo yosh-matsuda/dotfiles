@@ -66,11 +66,25 @@ Run `herdr` to start or reattach manually. `Ctrl+b q` detaches; when started aut
 
 Existing tmux installations, configuration, launcher symlinks, and plugin directories are left untouched. This playbook no longer manages them or enforces their absence.
 
+### Tab names
+
+Interactive fish shells inside herdr start [files/scripts/herdr-tab-names.mjs](files/scripts/herdr-tab-names.mjs) using the installed Node.js. A background worker per session uses the herdr 0.9.0 socket API to name numbered tabs after the foreground command in their selected pane. It reacts to events and checks once a second to cover process changes without title notifications. Command arguments are not included; at the prompt the label is the shell name, usually `fish`.
+
+Existing named tabs are left alone. Renaming an automatically managed tab to a different name stops updates for that tab. A manually chosen name identical to the default tab number cannot be distinguished from an unnamed tab.
+
+The worker stores its PID, assigned labels, and error log under `${XDG_STATE_HOME:-~/.local/state}/herdr-tab-names/`, outside this repository. It exits if the session connection fails; opening another fish shell starts it again. Open a new fish shell inside herdr to activate the feature after updating dotfiles. No changes to the outer terminal title are made.
+
 ### Agent integrations
 
-Integration choices and portable configuration can be managed in dotfiles. Install the official integration on each machine with `herdr integration install <agent>` and inspect it with `herdr integration status`; generated hooks and plugins should match the installed herdr version. Review changes to agent configuration before enabling an integration, especially when the agent's config or hooks already link into this repository. This playbook does not install integrations or change the existing Copilot hooks.
+Integration choices and portable configuration can be managed in dotfiles. Install the official integration on each machine with `herdr integration install <agent>` and inspect it with `herdr integration status`; generated hooks and plugins should match the installed herdr version. Review changes to agent configuration before enabling an integration, especially when the agent's config or hooks already link into this repository. This playbook does not install integrations. In herdr 0.9.0, the Copilot integration provides session identity for restore; agent state still comes from screen detection, so the integration is not required for notifications.
 
 References: [configuration](https://herdr.dev/docs/configuration/), [session state](https://herdr.dev/docs/session-state/), and [integrations](https://herdr.dev/docs/integrations/).
+
+### Notifications
+
+Herdr owns agent notifications with `[ui.toast] delivery = "terminal"`. It asks the outer terminal to display notifications for background agents that finish or need input. This supports Windows WezTerm connections over SSH, including through WSL, while attached. Windows notification settings and WezTerm's notification handling still apply. Herdr 0.9.0 suppresses notifications for its active tab, even if you switch to another Windows application.
+
+The legacy Copilot OSC notification hooks are removed to avoid a second notification path. `files/copilot/hooks/.gitkeep` preserves the directory targeted by the existing `~/.copilot/hooks` symlink. Restart an already-running Copilot CLI after updating to stop using previously loaded hooks. Apply herdr settings with `herdr server reload-config`.
 
 ### Validation
 

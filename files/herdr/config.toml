@@ -11,7 +11,7 @@ tab_bar_right_separator = " "
 prompt_new_tab_name = false
 
 [ui.toast]
-delivery = "herdr"
+delivery = "terminal"
 
 [theme]
 name = "terminal"
