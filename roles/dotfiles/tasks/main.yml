@@ -40,6 +40,20 @@
     dotfiles_link_dest_dir: "{{ xdg_config_home }}"
     dotfiles_link_file_type: any
 
+- name: Ensure Copilot CLI config directory exists
+  ansible.builtin.file:
+    path: "{{ copilot_config_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Create symbolic links for Copilot CLI config entries
+  ansible.builtin.include_tasks: symlink_entries.yml
+  vars:
+    dotfiles_link_source_path: "{{ home_dir }}/dotfiles/files/copilot"
+    dotfiles_link_dest_dir: "{{ copilot_config_dir }}"
+    dotfiles_link_file_type: any
+    dotfiles_link_backup_existing: true
+
 - name: Ensure bashrc fragments are present
   ansible.builtin.blockinfile:
     path: "{{ home_dir }}/.bashrc"

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "notification": [
+      {
+        "type": "command",
+        "matcher": "permission_prompt|elicitation_dialog|agent_idle",
+        "bash": "~/.copilot/hooks/notify.sh",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}
+

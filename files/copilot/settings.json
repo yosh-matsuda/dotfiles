@@ -1,0 +1,19 @@
+{
+  "model": "claude-opus-5",
+  "includeCoAuthoredBy": false,
+  "subagents": {
+    "agents": {
+      "code-review": {
+        "model": "claude-opus-5"
+      },
+      "rubber-duck": {
+        "model": "gpt-6-astra"
+      },
+      "security-review": {
+        "model": "gemini-3.8-flash"
+      }
+    }
+  },
+  "beep": true
+}
+
