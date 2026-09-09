@@ -81,19 +81,19 @@
     dest: "{{ copilot_config_dir }}/settings.json"
     mode: "0600"
 
-- name: Look up the herdr executable
-  ansible.builtin.shell: command -v herdr
-  changed_when: false
-  failed_when: false
-  register: dotfiles_herdr_executable
+- name: Check the herdr executable
+  when: brew_bin_dir is not none
+  ansible.builtin.stat:
+    path: "{{ brew_bin_dir }}/herdr"
+  register: dotfiles_herdr_binary
 
 # herdr writes an absolute hook path into settings.json, so it is installed per
 # host rather than tracked. Re-running the installer is idempotent.
 - name: Install the herdr Copilot CLI integration
-  when: dotfiles_herdr_executable.rc == 0
+  when: dotfiles_herdr_binary.stat.exists | default(false)
   ansible.builtin.command:
     argv:
-      - herdr
+      - "{{ brew_bin_dir }}/herdr"
       - integration
       - install
       - copilot
