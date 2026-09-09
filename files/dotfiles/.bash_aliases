@@ -33,9 +33,6 @@ else
     alias ipi="ip -f inet -o addr | cut -d' ' -f 7 | cut -d/ -f 1"
 fi
 
-if [ -f ~/.local/bin/tmux.sh ]; then
-    alias tmux='~/.local/bin/tmux.sh'
-fi
 if type bat 2>/dev/null 1>/dev/null; then
     alias cat='bat'
 fi

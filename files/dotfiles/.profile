@@ -78,9 +78,13 @@ IsInteractiveTerminal() {
 }
 
 if IsInteractiveTerminal; then
-    # run tmux (if ssh connected and not vscode and TMUX is not running yet)
-    if [ "$SSH_CONNECTION" ] && [[ $TERM_PROGRAM != "vscode" ]] && [ -z "$TMUX" ] && type tmux 2>/dev/null 1>/dev/null; then
-        exec ~/.local/bin/tmux.sh
+    if [ -n "${SSH_CONNECTION:-}" ] &&
+        [ "${TERM_PROGRAM:-}" != "vscode" ] &&
+        [ "${HERDR_ENV:-}" != "1" ] &&
+        [ "${DOTFILES_NO_HERDR:-}" != "1" ] &&
+        command -v herdr >/dev/null 2>&1; then
+        export FISH_RUNNING=0
+        exec herdr
     fi
 fi
 

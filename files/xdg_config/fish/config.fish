@@ -39,9 +39,6 @@ alias su='command sudo -iu'
 if type -q bat; alias cat='bat'; end
 if type -q eza; alias ls='eza -alh -s=time --color-scale --git'; end
 
-# tmux
-if [ -f ~/.local/bin/tmux.sh ]; alias tmux='~/.local/bin/tmux.sh'; end
-
 #
 # completions
 #
