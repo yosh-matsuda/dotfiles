@@ -1,5 +1,15 @@
 onboarding = false
 
+[ui]
+tab_bar_position = "bottom"
+tab_bar_right = [
+	{ type = "zoom" },
+	{ type = "hostname" },
+	{ type = "datetime", format = "%m/%d %H:%M" },
+]
+tab_bar_right_separator = " "
+prompt_new_tab_name = false
+
 [ui.toast]
 delivery = "herdr"
 
