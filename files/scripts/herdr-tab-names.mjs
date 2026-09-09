@@ -15,7 +15,16 @@ export function commandLabel(info) {
     const foreground = processes.find(process => process.pid === info.foreground_process_group_id)
         ?? [...processes].sort((first, second) => first.pid - second.pid)[0];
     if (!foreground) return null;
-    return Array.from(basename(foreground.argv0 || foreground.name)
+    const argv = foreground.argv ?? [];
+    let command = basename(argv[0] || foreground.argv0 || foreground.name);
+    if (['node', 'nodejs', 'bun'].includes(command)) {
+        const script = argv[1] ?? '';
+        if (/^(copilot|copilot\.[cm]?js)$/.test(basename(script))
+            || /(?:^|\/)@github\/copilot\/(?:index|cli)\.[cm]?js$/.test(script)) {
+            command = 'copilot';
+        }
+    }
+    return Array.from(command
         .replace(/^-+/, '').replace(/[\x00-\x1f\x7f]/g, '').trim()).slice(0, 60).join('') || null;
 }
 
