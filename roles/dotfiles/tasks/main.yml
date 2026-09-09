@@ -60,6 +60,44 @@
     dotfiles_link_dest_dir: "{{ copilot_config_dir }}"
     dotfiles_link_file_type: any
     dotfiles_link_backup_existing: true
+    dotfiles_link_excludes:
+      - settings.json
+
+# Copilot CLI rewrites settings.json atomically, which replaces a symlink with a
+# regular file, so the tracked defaults are merged into the live file instead.
+# Keys written locally by the CLI or by `herdr integration install` are kept.
+- name: Read the live Copilot CLI settings
+  ansible.builtin.slurp:
+    src: "{{ copilot_config_dir }}/settings.json"
+  register: dotfiles_copilot_settings_live
+  failed_when: false
+
+- name: Merge tracked Copilot CLI settings into the live settings
+  vars:
+    dotfiles_copilot_settings_current: "{{ (dotfiles_copilot_settings_live.content | b64decode | from_json) if 'content' in dotfiles_copilot_settings_live else {} }}"
+    dotfiles_copilot_settings_tracked: "{{ lookup('file', playbook_dir ~ '/files/copilot/settings.json') | from_json }}"
+  ansible.builtin.copy:
+    content: "{{ dotfiles_copilot_settings_current | combine(dotfiles_copilot_settings_tracked, recursive=true) | to_nice_json(indent=2) }}"
+    dest: "{{ copilot_config_dir }}/settings.json"
+    mode: "0600"
+
+- name: Look up the herdr executable
+  ansible.builtin.shell: command -v herdr
+  changed_when: false
+  failed_when: false
+  register: dotfiles_herdr_executable
+
+# herdr writes an absolute hook path into settings.json, so it is installed per
+# host rather than tracked. Re-running the installer is idempotent.
+- name: Install the herdr Copilot CLI integration
+  when: dotfiles_herdr_executable.rc == 0
+  ansible.builtin.command:
+    argv:
+      - herdr
+      - integration
+      - install
+      - copilot
+  changed_when: false
 
 - name: Ensure bashrc fragments are present
   ansible.builtin.blockinfile:

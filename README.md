@@ -76,7 +76,13 @@ The worker stores its PID, assigned labels, and error log under `${XDG_STATE_HOM
 
 ### Agent integrations
 
-Integration choices and portable configuration can be managed in dotfiles. Install the official integration on each machine with `herdr integration install <agent>` and inspect it with `herdr integration status`; generated hooks and plugins should match the installed herdr version. Review changes to agent configuration before enabling an integration, especially when the agent's config or hooks already link into this repository. This playbook does not install integrations. In herdr 0.9.0, the Copilot integration provides session identity for restore; agent state still comes from screen detection, so the integration is not required for notifications.
+Integration choices and portable configuration can be managed in dotfiles. Inspect integrations with `herdr integration status`; generated hooks and plugins should match the installed herdr version. Review changes to agent configuration before enabling an integration, especially when the agent's config or hooks already link into this repository. In herdr 0.9.0, the Copilot integration provides session identity for restore; agent state still comes from screen detection, so the integration is not required for notifications.
+
+The playbook runs `herdr integration install copilot` when `herdr` is on `PATH`; re-running it is idempotent. Install other integrations manually with `herdr integration install <agent>`.
+
+`~/.copilot/settings.json` is not symlinked. Copilot CLI rewrites it atomically, which replaces a symlink with a regular file, so the playbook merges `files/copilot/settings.json` into the live file instead. Tracked keys win; keys written locally by the CLI, such as `defaultPermissionMode`, and the `hooks` block written by `herdr integration install` are preserved. The `hooks` block is deliberately untracked because herdr writes an absolute path into it; herdr matches its own entry by exact command string, so editing that command makes the next install append a duplicate that fires the hook twice.
+
+`~/.copilot/hooks` stays a symlink into this repository, so `herdr integration install copilot` writes `files/copilot/hooks/herdr-agent-state.sh` directly into the working tree. Expect that file to change when herdr bumps its integration version.
 
 References: [configuration](https://herdr.dev/docs/configuration/), [session state](https://herdr.dev/docs/session-state/), and [integrations](https://herdr.dev/docs/integrations/).
 
@@ -84,7 +90,7 @@ References: [configuration](https://herdr.dev/docs/configuration/), [session sta
 
 Herdr owns agent notifications with `[ui.toast] delivery = "terminal"`. It asks the outer terminal to display notifications for background agents that finish or need input. This supports Windows WezTerm connections over SSH, including through WSL, while attached. Windows notification settings and WezTerm's notification handling still apply. Herdr 0.9.0 suppresses notifications for its active tab, even if you switch to another Windows application.
 
-The legacy Copilot OSC notification hooks are removed to avoid a second notification path. `files/copilot/hooks/.gitkeep` preserves the directory targeted by the existing `~/.copilot/hooks` symlink. Restart an already-running Copilot CLI after updating to stop using previously loaded hooks. Apply herdr settings with `herdr server reload-config`.
+The legacy Copilot OSC notification hooks are removed to avoid a second notification path. Restart an already-running Copilot CLI after updating to stop using previously loaded hooks. Apply herdr settings with `herdr server reload-config`.
 
 ### Validation
 

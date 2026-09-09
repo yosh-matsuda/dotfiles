@@ -4,6 +4,7 @@
     recurse: false
     hidden: "{{ dotfiles_link_hidden | default(false) }}"
     file_type: "{{ dotfiles_link_file_type | default('any') }}"
+    excludes: "{{ dotfiles_link_excludes | default(omit) }}"
   register: dotfiles_link_sources
 
 - name: Check existing destinations
