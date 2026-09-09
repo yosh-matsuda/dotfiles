@@ -1,5 +1,8 @@
 onboarding = false
 
+[terminal]
+new_cwd = "home"
+
 [ui]
 tab_bar_position = "bottom"
 tab_bar_right = [
