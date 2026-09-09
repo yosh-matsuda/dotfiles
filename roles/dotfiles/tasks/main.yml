@@ -99,6 +99,25 @@
       - copilot
   changed_when: false
 
+# The merge is one way, so keys that exist only in the live file are easy to
+# lose track of. The fish prompt cannot report them because it only sees files
+# inside this repository, so report them where the merge happens.
+- name: Detect Copilot CLI settings that are not tracked
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_python_interpreter | default('python3') }}"
+      - "{{ playbook_dir }}/files/scripts/copilot-settings-drift.py"
+      - --json
+  changed_when: false
+  register: dotfiles_copilot_settings_drift
+
+- name: Report Copilot CLI settings that are not tracked
+  vars:
+    dotfiles_copilot_untracked: "{{ dotfiles_copilot_settings_drift.stdout | from_json | selectattr('kind', 'eq', 'untracked') | map(attribute='key') | list }}"
+  when: dotfiles_copilot_untracked | length > 0
+  ansible.builtin.debug:
+    msg: "Local only, not tracked in files/copilot/settings.json: {{ dotfiles_copilot_untracked | join(', ') }}"
+
 - name: Ensure bashrc fragments are present
   ansible.builtin.blockinfile:
     path: "{{ home_dir }}/.bashrc"

@@ -82,7 +82,9 @@ The playbook runs `herdr integration install copilot` when `herdr` is on `PATH`;
 
 `~/.copilot/settings.json` is not symlinked. Copilot CLI rewrites it atomically, which replaces a symlink with a regular file, so the playbook merges `files/copilot/settings.json` into the live file instead. Tracked keys win; keys written locally, such as the `hooks` block from `herdr integration install`, are preserved. The `hooks` block is deliberately untracked because herdr writes an absolute path into it; herdr matches its own entry by exact command string, so editing that command makes the next install append a duplicate that fires the hook twice.
 
-Unlike a symlink this merge is one way. Settings changed through the CLI stay on that machine, and settings tracked here are restored on the next playbook run. To keep a local change everywhere, copy it into `files/copilot/settings.json` and re-run the playbook. [files/scripts/copilot-settings-drift.py](files/scripts/copilot-settings-drift.py) reports what differs:
+Unlike a symlink this merge is one way. Settings changed through the CLI stay on that machine, and settings tracked here are restored on the next playbook run. To keep a local change everywhere, copy it into `files/copilot/settings.json` and re-run the playbook.
+
+The playbook reports keys that exist only in the live file at the end of the Copilot tasks, so the one-way merge does not hide them. The fish prompt cannot report this: its `dotfiles dirty` indicator only sees files inside this repository, and `~/.copilot/settings.json` is no longer one of them. Run the same check by hand with [files/scripts/copilot-settings-drift.py](files/scripts/copilot-settings-drift.py):
 
 ```bash
 python3 files/scripts/copilot-settings-drift.py
