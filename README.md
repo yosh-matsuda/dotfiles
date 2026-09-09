@@ -80,7 +80,15 @@ Integration choices and portable configuration can be managed in dotfiles. Inspe
 
 The playbook runs `herdr integration install copilot` when `herdr` is on `PATH`; re-running it is idempotent. Install other integrations manually with `herdr integration install <agent>`.
 
-`~/.copilot/settings.json` is not symlinked. Copilot CLI rewrites it atomically, which replaces a symlink with a regular file, so the playbook merges `files/copilot/settings.json` into the live file instead. Tracked keys win; keys written locally by the CLI, such as `defaultPermissionMode`, and the `hooks` block written by `herdr integration install` are preserved. The `hooks` block is deliberately untracked because herdr writes an absolute path into it; herdr matches its own entry by exact command string, so editing that command makes the next install append a duplicate that fires the hook twice.
+`~/.copilot/settings.json` is not symlinked. Copilot CLI rewrites it atomically, which replaces a symlink with a regular file, so the playbook merges `files/copilot/settings.json` into the live file instead. Tracked keys win; keys written locally, such as the `hooks` block from `herdr integration install`, are preserved. The `hooks` block is deliberately untracked because herdr writes an absolute path into it; herdr matches its own entry by exact command string, so editing that command makes the next install append a duplicate that fires the hook twice.
+
+Unlike a symlink this merge is one way. Settings changed through the CLI stay on that machine, and settings tracked here are restored on the next playbook run. To keep a local change everywhere, copy it into `files/copilot/settings.json` and re-run the playbook. [files/scripts/copilot-settings-drift.py](files/scripts/copilot-settings-drift.py) reports what differs:
+
+```bash
+python3 files/scripts/copilot-settings-drift.py
+```
+
+It lists `untracked` keys that exist only locally, `drift` where a tracked key was changed locally and will be restored, and `missing` where a tracked key is not applied yet. Pass `--json` for machine-readable output; `COPILOT_HOME` selects a different live directory.
 
 `~/.copilot/hooks` stays a symlink into this repository, so `herdr integration install copilot` writes `files/copilot/hooks/herdr-agent-state.sh` directly into the working tree. Expect that file to change when herdr bumps its integration version.
 
