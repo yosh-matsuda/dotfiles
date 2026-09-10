@@ -87,7 +87,9 @@ Detection depends on `TERM_PROGRAM`, which SSH does not forward. The login profi
 
 `TERM_PROGRAM` is intentionally absent inside panes; only the attached client matters. Verify with `herdr notification show test`.
 
-herdr keeps one agent state per pane and infers it from the visible screen, so the background sessions of a Copilot process never notify. `files/copilot/hooks/session-notify.sh` closes that gap: it runs on every `Notification` event and pushes its own toast through the socket API. Its text is `<directory>: <message>` instead of the generic `copilot finished: <workspace>` that herdr emits, so the visible session can produce two toasts for one event.
+herdr keeps one agent state per pane and infers it from the visible screen, so the background sessions of a Copilot process never notify. `files/copilot/hooks/session-notify.sh` closes that gap: it runs on `Stop` and pushes its own toast through the socket API. Its text is `<directory>: <last reply>`, read from the transcript the hook is handed, instead of the generic `copilot finished: <workspace>` that herdr emits, so the visible session can produce two toasts for one event.
+
+The hook is also registered for `Notification`, which would cover permission prompts, but that event never fired in 1.0.84. Only `SessionStart`, `UserPromptSubmit`, `Stop` and `SessionEnd` were observed.
 
 `[ui.toast] delivery` must stay `terminal`. `off` also drops `notification.show` on the client side, which would silence the hook as well.
 

@@ -8,6 +8,13 @@
         "timeoutSec": 10,
         "type": "command"
       }
+    ],
+    "Stop": [
+      {
+        "bash": "bash \"$HOME/.copilot/hooks/session-notify.sh\"",
+        "timeoutSec": 10,
+        "type": "command"
+      }
     ]
   },
   "includeCoAuthoredBy": false,

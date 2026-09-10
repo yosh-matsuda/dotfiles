@@ -19,6 +19,9 @@ import os
 import socket
 import time
 
+TRANSCRIPT_TAIL_BYTES = 256 * 1024
+BODY_LIMIT = 240
+
 socket_path = os.environ.get("HERDR_SOCKET_PATH")
 hook_input_file = os.environ.get("HERDR_HOOK_INPUT_FILE")
 if not socket_path:
@@ -41,18 +44,45 @@ def first_text(*keys):
     for key in keys:
         value = hook_input.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            return " ".join(value.split())
     return None
 
 
-body = first_text(
-    "message",
-    "notification_message",
-    "notificationMessage",
-    "body",
-    "notification_type",
-    "notificationType",
-)
+# The Stop payload carries no message, so the turn's last reply is used as the body.
+def last_assistant_message(path):
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            start = max(0, handle.tell() - TRANSCRIPT_TAIL_BYTES)
+            handle.seek(start)
+            chunk = handle.read()
+    except Exception:
+        return None
+    lines = chunk.split(b"\n")
+    if start:
+        lines = lines[1:]
+    for line in reversed(lines):
+        if b"assistant.message" not in line:
+            continue
+        try:
+            event = json.loads(line.decode("utf-8"))
+        except Exception:
+            continue
+        if event.get("type") != "assistant.message":
+            continue
+        text = event.get("data", {}).get("content")
+        if isinstance(text, str) and text.strip():
+            return " ".join(text.split())
+    return None
+
+
+body = first_text("message", "notification_message", "notificationMessage")
+if not body:
+    transcript = first_text("transcript_path", "transcriptPath")
+    if transcript:
+        body = last_assistant_message(transcript)
+if not body:
+    body = first_text("notification_type", "notificationType", "stop_reason", "stopReason")
 if not body:
     raise SystemExit(0)
 
@@ -63,7 +93,7 @@ request = {
     "id": f"copilot:session-notify:{time.time_ns()}",
     "method": "notification.show",
     # Sound is left to herdr's own state notifications and the OS toast itself.
-    "params": {"title": title, "body": body, "sound": "none"},
+    "params": {"title": title, "body": body[:BODY_LIMIT], "sound": "none"},
 }
 
 try:
