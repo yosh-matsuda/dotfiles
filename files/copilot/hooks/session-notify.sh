@@ -77,10 +77,18 @@ def last_assistant_message(path):
 
 
 body = first_text("message", "notification_message", "notificationMessage")
-if not body:
-    transcript = first_text("transcript_path", "transcriptPath")
-    if transcript:
-        body = last_assistant_message(transcript)
+transcript = first_text("transcript_path", "transcriptPath")
+
+# A subagent also raises Stop, but reports its parent's transcript under its own
+# session id. Staying silent there keeps the toast tied to the user's turn.
+if transcript:
+    session_id = first_text("session_id", "sessionId")
+    owner = os.path.basename(os.path.dirname(os.path.normpath(transcript)))
+    if session_id and owner and session_id != owner:
+        raise SystemExit(0)
+
+if not body and transcript:
+    body = last_assistant_message(transcript)
 if not body:
     body = first_text("notification_type", "notificationType", "stop_reason", "stopReason")
 if not body:
