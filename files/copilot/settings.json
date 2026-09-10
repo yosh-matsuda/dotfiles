@@ -1,6 +1,15 @@
 {
   "beep": false,
   "defaultPermissionMode": "allow-all",
+  "hooks": {
+    "Notification": [
+      {
+        "bash": "bash \"$HOME/.copilot/hooks/session-notify.sh\"",
+        "timeoutSec": 10,
+        "type": "command"
+      }
+    ]
+  },
   "includeCoAuthoredBy": false,
   "model": "claude-opus-5",
   "subagents": {

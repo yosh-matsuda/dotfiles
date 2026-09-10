@@ -29,7 +29,7 @@ $ ansible-galaxy collection install -r collections/requirements.yml
 
 ## Usage
 
-First, copy the local example files and edit them for your environment.
+Copy the local example files and edit them for your environment. Both are Git-ignored; put local inventory entries and private variables only there.
 
 ```bash
 $ cp local.hosts.yml.example local.hosts.yml
@@ -42,72 +42,53 @@ Then run the playbook:
 $ ansible-playbook site.yml --ask-become-pass
 ```
 
-On Ubuntu 26.04 with sudo-rs, Ansible needs `ANSIBLE_BECOME_EXE=sudo.ws`:
+On Ubuntu 26.04 with sudo-rs, prefix the command with `ANSIBLE_BECOME_EXE=sudo.ws`.
+
+Main settings live under [files](files). Package lists and shared variables are defined in [group_vars/all.yml](group_vars/all.yml). Paths are preconfigured in `ansible.cfg`, so run the commands from the repository root.
+
+Syntax check:
 
 ```bash
-$ ANSIBLE_BECOME_EXE=sudo.ws ansible-playbook site.yml --ask-become-pass
+$ ansible-playbook site.yml --syntax-check
 ```
 
-Both `local.hosts.yml` and `local.vars.yml` are Git-ignored. Keep the example files as tracked templates and add your local inventory entries or private variables only to the copied files. `local.vars.yml` is used by templated dotfiles under [files/templates](files/templates), such as [files/templates/.gitconfig](files/templates/.gitconfig).
+## Things to know
 
-Repository-local defaults such as the inventory path, roles path, and collections path are configured in `ansible.cfg`, so the commands above can be run from the repository root without extra `-i` or path options.
+### herdr
 
-Main settings live under [files](files). Package lists and shared variables are defined in [group_vars/all.yml](group_vars/all.yml).
-
-## herdr
-
-Homebrew installs herdr through the existing package role. Update it with Homebrew, not `herdr update`.
-
-[files/herdr/config.toml](files/herdr/config.toml) is linked individually to `~/.config/herdr/config.toml`. An existing regular file is backed up before linking. The surrounding directory remains local: do not commit session snapshots, pane history, logs, sockets, or other runtime state. Common custom scripts or sound assets can also be managed when needed.
-
-The login profile starts herdr only for interactive SSH terminals outside VS Code and herdr. Set `DOTFILES_NO_HERDR=1` in the login environment to bypass automatic startup. For a one-off recovery shell that skips the login profile and bashrc, use `ssh -t HOST 'bash --noprofile --norc -i'`.
-
-Run `herdr` to start or reattach manually. `Ctrl+b q` detaches; when started automatically with `exec`, detaching also ends the SSH login. After editing settings, use `herdr server reload-config` to reload supported settings.
-
-Existing tmux installations, configuration, launcher symlinks, and plugin directories are left untouched. This playbook no longer manages them or enforces their absence.
+-   herdr is installed with Homebrew. Update it with Homebrew, not `herdr update`.
+-   Interactive SSH terminals start herdr automatically, except inside VS Code and herdr. Set `DOTFILES_NO_HERDR=1` to opt out, or use `ssh -t HOST 'bash --noprofile --norc -i'` for a recovery shell.
+-   `Ctrl+b q` detaches; with the automatic `exec` startup, detaching also ends the SSH login.
+-   Apply config changes with `herdr server reload-config`.
+-   Only [files/herdr/config.toml](files/herdr/config.toml) is managed. Do not commit session snapshots, logs, sockets, or other runtime state from `~/.config/herdr`.
+-   Existing tmux installations and configuration are left untouched and unmanaged.
 
 ### Tab names
 
-Interactive fish shells inside herdr start [files/scripts/herdr-tab-names.mjs](files/scripts/herdr-tab-names.mjs) using the installed Node.js. A background worker per session uses the herdr 0.9.0 socket API to name numbered tabs after the foreground command in their selected pane. It reacts to events and checks once a second to cover process changes without title notifications. Command arguments are not included; at the prompt the label is the shell name, usually `fish`.
+Interactive fish shells inside herdr name numbered tabs after the foreground command via [files/scripts/herdr-tab-names.mjs](files/scripts/herdr-tab-names.mjs). Manually renamed tabs are left alone. Open a new fish shell inside herdr to pick up updates.
 
-Existing named tabs are left alone. Renaming an automatically managed tab to a different name stops updates for that tab. A manually chosen name identical to the default tab number cannot be distinguished from an unnamed tab.
+### Copilot CLI settings
 
-The worker stores its PID, assigned labels, and error log under `${XDG_STATE_HOME:-~/.local/state}/herdr-tab-names/`, outside this repository. It exits if the session connection fails; opening another fish shell starts it again. Open a new fish shell inside herdr to activate the feature after updating dotfiles. No changes to the outer terminal title are made.
+`~/.copilot/settings.json` is merged, not symlinked, because Copilot CLI rewrites the file atomically. The merge is one way: keys tracked in `files/copilot/settings.json` are restored on every run, and local-only keys such as the `hooks` block are preserved. To keep a local change everywhere, copy it into `files/copilot/settings.json`.
 
-### Agent integrations
-
-Integration choices and portable configuration can be managed in dotfiles. Inspect integrations with `herdr integration status`; generated hooks and plugins should match the installed herdr version. Review changes to agent configuration before enabling an integration, especially when the agent's config or hooks already link into this repository. In herdr 0.9.0, the Copilot integration provides session identity for restore; agent state still comes from screen detection, so the integration is not required for notifications.
-
-The playbook runs `herdr integration install copilot` when `herdr` is on `PATH`; re-running it is idempotent. Install other integrations manually with `herdr integration install <agent>`.
-
-`~/.copilot/settings.json` is not symlinked. Copilot CLI rewrites it atomically, which replaces a symlink with a regular file, so the playbook merges `files/copilot/settings.json` into the live file instead. Tracked keys win; keys written locally, such as the `hooks` block from `herdr integration install`, are preserved. The `hooks` block is deliberately untracked because herdr writes an absolute path into it; herdr matches its own entry by exact command string, so editing that command makes the next install append a duplicate that fires the hook twice.
-
-Unlike a symlink this merge is one way. Settings changed through the CLI stay on that machine, and settings tracked here are restored on the next playbook run. To keep a local change everywhere, copy it into `files/copilot/settings.json` and re-run the playbook.
-
-The playbook reports keys that exist only in the live file at the end of the Copilot tasks, so the one-way merge does not hide them. The fish prompt cannot report this: its `dotfiles dirty` indicator only sees files inside this repository, and `~/.copilot/settings.json` is no longer one of them. Run the same check by hand with [files/scripts/copilot-settings-drift.py](files/scripts/copilot-settings-drift.py):
+The playbook reports local-only keys after the Copilot tasks. Check by hand with:
 
 ```bash
-python3 files/scripts/copilot-settings-drift.py
+$ python3 files/scripts/copilot-settings-drift.py
 ```
 
-It lists `untracked` keys that exist only locally, `drift` where a tracked key was changed locally and will be restored, and `missing` where a tracked key is not applied yet. Pass `--json` for machine-readable output; `COPILOT_HOME` selects a different live directory.
-
-`~/.copilot/hooks` stays a symlink into this repository, so `herdr integration install copilot` writes `files/copilot/hooks/herdr-agent-state.sh` directly into the working tree. Expect that file to change when herdr bumps its integration version.
-
-References: [configuration](https://herdr.dev/docs/configuration/), [session state](https://herdr.dev/docs/session-state/), and [integrations](https://herdr.dev/docs/integrations/).
+`~/.copilot/hooks` is a symlink into this repository, so `herdr integration install copilot` writes into the working tree. Expect `files/copilot/hooks/herdr-agent-state.sh` to change when herdr updates.
 
 ### Notifications
 
-Herdr owns agent notifications with `[ui.toast] delivery = "terminal"`. It asks the outer terminal to display notifications for background agents that finish or need input. This supports Windows WezTerm connections over SSH, including through WSL, while attached. Windows notification settings and WezTerm's notification handling still apply. Herdr 0.9.0 suppresses notifications for its active tab, even if you switch to another Windows application.
+herdr delivers agent notifications through the outer terminal (`[ui.toast] delivery = "terminal"`), for both finished and needs-attention events.
 
-Herdr chooses the escape sequence from `TERM_PROGRAM`, `KITTY_WINDOW_ID`, and `TERM`, and sends nothing when none of them identifies a supported terminal. SSH forwards `TERM` but not `TERM_PROGRAM`, so over SSH the detection fails silently and only the terminal bell remains. The login profile therefore mirrors a recognized `TERM_PROGRAM` into `LC_TERM_PROGRAM` and restores it on the far side; the default `SendEnv`/`AcceptEnv` lists already pass `LC_*`, so no sshd change is needed. On Windows, `WSLENV` must list `TERM_PROGRAM` for it to reach WSL in the first place. Check with `env | grep TERM_PROGRAM` in a herdr pane after a fresh login.
+Detection depends on `TERM_PROGRAM`, which SSH does not forward. The login profile mirrors it into `LC_TERM_PROGRAM` and restores it on the far side. On Windows, `WSLENV` must list `TERM_PROGRAM` for it to reach WSL.
 
-The legacy Copilot OSC notification hooks are removed to avoid a second notification path. Restart an already-running Copilot CLI after updating to stop using previously loaded hooks. Apply herdr settings with `herdr server reload-config`.
+`TERM_PROGRAM` is intentionally absent inside panes; only the attached client matters. Verify with `herdr notification show test`.
 
-### Validation
+herdr keeps one agent state per pane and infers it from the visible screen, so the background sessions of a Copilot process never notify. `files/copilot/hooks/session-notify.sh` closes that gap: it runs on every `Notification` event and pushes its own toast through the socket API. Its text is `<directory>: <message>` instead of the generic `copilot finished: <workspace>` that herdr emits, so the visible session can produce two toasts for one event.
 
-```bash
-ansible-playbook site.yml --syntax-check
-```
+`[ui.toast] delivery` must stay `terminal`. `off` also drops `notification.show` on the client side, which would silence the hook as well.
 
-Verify SSH reattachment, terminal input, clipboard, and notifications on a configured machine.
+References: [configuration](https://herdr.dev/docs/configuration/), [session state](https://herdr.dev/docs/session-state/), [integrations](https://herdr.dev/docs/integrations/).
