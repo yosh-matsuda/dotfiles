@@ -100,6 +100,8 @@ References: [configuration](https://herdr.dev/docs/configuration/), [session sta
 
 Herdr owns agent notifications with `[ui.toast] delivery = "terminal"`. It asks the outer terminal to display notifications for background agents that finish or need input. This supports Windows WezTerm connections over SSH, including through WSL, while attached. Windows notification settings and WezTerm's notification handling still apply. Herdr 0.9.0 suppresses notifications for its active tab, even if you switch to another Windows application.
 
+Herdr chooses the escape sequence from `TERM_PROGRAM`, `KITTY_WINDOW_ID`, and `TERM`, and sends nothing when none of them identifies a supported terminal. SSH forwards `TERM` but not `TERM_PROGRAM`, so over SSH the detection fails silently and only the terminal bell remains. The login profile therefore mirrors a recognized `TERM_PROGRAM` into `LC_TERM_PROGRAM` and restores it on the far side; the default `SendEnv`/`AcceptEnv` lists already pass `LC_*`, so no sshd change is needed. On Windows, `WSLENV` must list `TERM_PROGRAM` for it to reach WSL in the first place. Check with `env | grep TERM_PROGRAM` in a herdr pane after a fresh login.
+
 The legacy Copilot OSC notification hooks are removed to avoid a second notification path. Restart an already-running Copilot CLI after updating to stop using previously loaded hooks. Apply herdr settings with `herdr server reload-config`.
 
 ### Validation

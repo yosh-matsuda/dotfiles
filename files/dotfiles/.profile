@@ -66,6 +66,15 @@ if [ -d "$HOME/.local/bin" ]; then
     AddToPATH "$HOME/.local/bin"
 fi
 
+# herdr picks its notification escape sequence from TERM_PROGRAM, which ssh drops;
+# relay it through LC_* because that is all sshd accepts by default.
+case "${TERM_PROGRAM:-}" in
+WezTerm | ghostty | iTerm.app) export LC_TERM_PROGRAM="$TERM_PROGRAM" ;;
+esac
+if [ -z "${TERM_PROGRAM:-}" ] && [ -n "${LC_TERM_PROGRAM:-}" ]; then
+    export TERM_PROGRAM="$LC_TERM_PROGRAM"
+fi
+
 IsInteractiveTerminal() {
     # if interactive shell
     if [[ $- =~ i ]]; then
