@@ -15,6 +15,10 @@ prompt_new_tab_name = false
 
 [ui.toast]
 delivery = "terminal"
+# The Copilot Stop hook already toasts with the reply text, and herdr's own state
+# toast would double it. API notifications ignore this delay, so parking it at the
+# maximum keeps herdr's built-in toast from firing during normal use.
+delay_seconds = 3600
 
 [theme]
 name = "dracula"

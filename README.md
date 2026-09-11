@@ -97,4 +97,8 @@ Copilot flushes the transcript after the hook has started, so the reply that jus
 
 `[ui.toast] delivery` must stay `terminal`. `off` also drops `notification.show` on the client side, which would silence the hook as well.
 
+herdr raises its own `copilot finished` toast from screen detection, which duplicates the hook whenever the outer terminal is unfocused. There is no per-event switch, so `delay_seconds` is parked at its maximum instead: state toasts wait an hour and are replaced as soon as the pane changes state, while `notification.show` from the hook ignores the delay entirely. A session left untouched for a full hour can still produce one late toast.
+
+Copilot CLI can raise OS notifications itself (`notifications`, off by default). Leave it off; herdr and the hook already cover it.
+
 References: [configuration](https://herdr.dev/docs/configuration/), [session state](https://herdr.dev/docs/session-state/), [integrations](https://herdr.dev/docs/integrations/).
