@@ -89,9 +89,11 @@ Detection depends on `TERM_PROGRAM`, which SSH does not forward. The login profi
 
 herdr keeps one agent state per pane and infers it from the visible screen, so the background sessions of a Copilot process never notify. `files/copilot/hooks/session-notify.sh` closes that gap: it runs on `Stop` and pushes its own toast through the socket API. Its text is `<directory>: <last reply>`, read from the transcript the hook is handed, instead of the generic `copilot finished: <workspace>` that herdr emits, so the visible session can produce two toasts for one event.
 
-The hook is also registered for `Notification`, which would cover permission prompts, but that event never fired in 1.0.84. `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `Stop`, `SubagentStop` and `SessionEnd` all fire; `Stop` is raised once per turn, not once per tool call.
+`Notification` is deliberately not registered. It stays silent in `-p` mode but fires interactively for background shell completions, so it announces every `Run command` that finishes. `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `Stop`, `SubagentStop` and `SessionEnd` also fire; `Stop` is raised once per turn, not once per tool call.
 
 Subagents raise `Stop` too, which would notify in the middle of a turn. They report their parent's `transcript_path` under their own `session_id`, and the hook drops the event on that mismatch.
+
+Copilot flushes the transcript after the hook has started, so the reply that just ended the turn is often missing or half written. Reading it straight away yields the previous message and the toast looks like it fired mid-turn; the hook therefore retries for two seconds until a reply newer than the `Stop` timestamp appears.
 
 `[ui.toast] delivery` must stay `terminal`. `off` also drops `notification.show` on the client side, which would silence the hook as well.
 
