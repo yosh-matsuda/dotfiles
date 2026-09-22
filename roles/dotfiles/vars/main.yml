@@ -37,8 +37,19 @@ dotfiles_bashrc_fragments:
         return 1
     }
 
-    # if not vscode, run fish in interactive bash
-    if [[ ${FISH_RUNNING:-0} -eq 0 ]] && [[ ${TERM_PROGRAM:-} != vscode ]] && IsInteractiveTerminal; then
+    ParentCommand() {
+        local comm
+        if [[ -r /proc/$PPID/comm ]]; then
+            read -r comm <"/proc/$PPID/comm"
+        else
+            comm=$(ps -o comm= -p "$PPID" 2>/dev/null)
+        fi
+        comm=${comm##*/}
+        printf '%s' "${comm#-}"
+    }
+
+    # fish から起動した bash はそのまま使う。それ以外の対話 bash は fish に置き換える
+    if IsInteractiveTerminal && [[ ${TERM_PROGRAM:-} != vscode ]] && [[ $(ParentCommand) != fish ]]; then
         if type fish 2>/dev/null 1>/dev/null; then
             exec fish
         fi

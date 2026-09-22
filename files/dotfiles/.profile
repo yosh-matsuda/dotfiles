@@ -92,7 +92,6 @@ if IsInteractiveTerminal; then
         [ "${HERDR_ENV:-}" != "1" ] &&
         [ "${DOTFILES_NO_HERDR:-}" != "1" ] &&
         command -v herdr >/dev/null 2>&1; then
-        export FISH_RUNNING=0
         exec herdr
     fi
 fi

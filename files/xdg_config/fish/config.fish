@@ -56,7 +56,6 @@ end
 #
 # variables
 #
-set -x FISH_RUNNING 1
 set -g __dotfiles_repo $HOME/dotfiles
 
 function __dotfiles_repo_available
