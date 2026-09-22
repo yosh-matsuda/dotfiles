@@ -7,8 +7,8 @@
   become: false
   roles:
   - prerequisite
-  - pipx
   - dotfiles
   - brew
+  - uv
   - docker
   - fish

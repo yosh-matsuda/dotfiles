@@ -26,6 +26,7 @@ brew_packages:
 - eza
 - node
 - fastfetch
+- uv
 brew_binary_path: >-
   {{
     '/home/linuxbrew/.linuxbrew/bin/brew' if is_ubuntu
@@ -34,14 +35,15 @@ brew_binary_path: >-
     else none
   }}
 brew_bin_dir: "{{ brew_binary_path | dirname if brew_binary_path is not none else none }}"
-pipx_packages:
+# Pin with a version specifier (e.g. cmakelang==0.6.13) to exclude a tool from upgrades
+uv_tools:
 - cmakelang
 - compdb
 - invoke
-- uv
+uv_gpu_tools:
+- nvitop
 prerequisite_apt_packages:
 - git
-- pipx
 - sysstat
 - curl
 - ripgrep

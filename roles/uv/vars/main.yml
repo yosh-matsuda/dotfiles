@@ -1,0 +1,1 @@
+uv_binary_path: "{{ brew_bin_dir ~ '/uv' if brew_bin_dir is not none else none }}"

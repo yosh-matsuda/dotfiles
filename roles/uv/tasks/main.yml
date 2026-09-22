@@ -1,0 +1,47 @@
+- name: Check uv binary
+  when: uv_binary_path is not none
+  ansible.builtin.stat:
+    path: "{{ uv_binary_path }}"
+  register: uv_binary_stat
+
+- name: Fail when uv is not installed
+  when: uv_binary_path is none or not uv_binary_stat.stat.exists
+  ansible.builtin.fail:
+    msg: uv is not installed; the brew role must run before this role
+
+- name: Install or upgrade uv tools
+  ansible.builtin.command:
+    argv:
+    - "{{ uv_binary_path }}"
+    - tool
+    - install
+    - --upgrade
+    - "{{ item }}"
+  loop: "{{ uv_tools }}"
+  register: uv_tool_result
+  # uv relinks shims every run ("Installed N executables"), so only package-level lines mean a real change
+  changed_when: (uv_tool_result.stderr ~ uv_tool_result.stdout) is search('(Installed|Uninstalled|Updated) [0-9]+ package')
+
+- name: Install uv tools requiring an NVIDIA GPU
+  when: ansible_facts['system'] == 'Linux'
+  block:
+  - name: Check NVIDIA GPU
+    ansible.builtin.shell: |
+      test -e /proc/driver/nvidia/version || grep -q '^0x10de$' /sys/bus/pci/devices/*/vendor
+    args:
+      executable: /bin/bash
+    register: nvidia_gpu_check
+    changed_when: false
+    failed_when: false
+  - name: Install or upgrade GPU uv tools
+    when: nvidia_gpu_check.rc == 0 or is_wsl
+    ansible.builtin.command:
+      argv:
+      - "{{ uv_binary_path }}"
+      - tool
+      - install
+      - --upgrade
+      - "{{ item }}"
+    loop: "{{ uv_gpu_tools }}"
+    register: uv_gpu_tool_result
+    changed_when: (uv_gpu_tool_result.stderr ~ uv_gpu_tool_result.stdout) is search('(Installed|Uninstalled|Updated) [0-9]+ package')
