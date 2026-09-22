@@ -56,9 +56,9 @@ $ ansible-playbook site.yml --syntax-check
 
 ### herdr
 
--   herdr is installed with Homebrew. Update it with Homebrew, not `herdr update`.
+-   herdr is installed with Homebrew, and its self-update is disabled for Homebrew installs. Detach, run `brew update && brew upgrade herdr`, then run `herdr` again to reconnect with the updated client. The running server keeps its old version; `herdr status` reports `update.restart_needed`, and only then is `herdr server stop` required.
 -   Interactive SSH terminals start herdr automatically, except inside VS Code and herdr. Set `DOTFILES_NO_HERDR=1` to opt out, or use `ssh -t HOST 'bash --noprofile --norc -i'` for a recovery shell.
--   `Ctrl+b q` detaches; with the automatic `exec` startup, detaching also ends the SSH login.
+-   `Ctrl+b q` detaches the client and leaves the server and its panes running. herdr is started without `exec`, so detaching returns to the login shell instead of closing the SSH session, which is what the update flow above needs.
 -   Panes inherit the environment of the long-lived `herdr server` process, so shell startup must not depend on inherited variables. Interactive bash switches to fish based on its parent process, which keeps herdr panes on fish no matter where the server was started from.
 -   Apply config changes with `herdr server reload-config`.
 -   Only [files/herdr/config.toml](files/herdr/config.toml) is managed. Do not commit session snapshots, logs, sockets, or other runtime state from `~/.config/herdr`.

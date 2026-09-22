@@ -92,7 +92,8 @@ if IsInteractiveTerminal; then
         [ "${HERDR_ENV:-}" != "1" ] &&
         [ "${DOTFILES_NO_HERDR:-}" != "1" ] &&
         command -v herdr >/dev/null 2>&1; then
-        exec herdr
+        # exec しないのは、デタッチ後もログインシェルを残して herdr 自体の更新をできるようにするため
+        herdr
     fi
 fi
 
