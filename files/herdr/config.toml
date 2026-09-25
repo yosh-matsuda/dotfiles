@@ -4,6 +4,8 @@ onboarding = false
 new_cwd = "home"
 
 [ui]
+# "auto" draws a fake cursor on WSL, which breaks IME composition anchoring.
+host_cursor = "native"
 tab_bar_position = "bottom"
 tab_bar_right = [
 	{ type = "zoom" },
