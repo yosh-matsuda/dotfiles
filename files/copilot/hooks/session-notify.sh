@@ -103,6 +103,38 @@ if transcript:
     if session_id and owner and session_id != owner:
         raise SystemExit(0)
 
+
+def is_copilot(pid):
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as handle:
+            argv = [arg.decode("utf-8", "replace") for arg in handle.read().split(b"\0") if arg]
+    except OSError:
+        return False
+    if not argv:
+        return False
+    name = os.path.basename(argv[0])
+    return name == "copilot" or (name in ("node", "nodejs") and len(argv) > 1 and "copilot" in argv[1])
+
+
+def parent_pid(pid):
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as handle:
+            return int(handle.read().rsplit(")", 1)[1].split()[1])
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
+# A copilot run by an agent's shell tool inherits the pane's herdr env and hooks;
+# only the outermost session belongs to the user.
+copilot_ancestors = 0
+pid = os.getppid()
+while pid > 1:
+    if is_copilot(pid):
+        copilot_ancestors += 1
+    pid = parent_pid(pid)
+if copilot_ancestors > 1:
+    raise SystemExit(0)
+
 if not body and transcript:
     # The reply is still being flushed when the hook starts, and the half written
     # line parses as the previous turn, which reads like a mid-turn toast.
