@@ -1,7 +1,16 @@
 onboarding = false
 
 [terminal]
-new_cwd = "home"
+new_cwd = "follow"
+
+[keys]
+# new_cwd applies to panes, tabs and workspaces alike, so workspaces get $HOME via the command below.
+new_workspace = ""
+
+[[keys.command]]
+key = "prefix+shift+n"
+type = "shell"
+command = '"${HERDR_BIN_PATH:-herdr}" workspace create --cwd "$HOME" --focus'
 
 [ui]
 # "auto" draws a fake cursor on WSL, which breaks IME composition anchoring.
