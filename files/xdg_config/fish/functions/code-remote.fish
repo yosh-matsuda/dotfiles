@@ -13,8 +13,9 @@ function code-remote --description 'Open a directory or file in a connected VS C
     set -l sockets $runtime_dir/vscode-ipc-*.sock
     if set -q clis[1]; and set -q sockets[1]
         set -l cli (command ls -t $clis)[1]
-        # Closed windows leave stale sockets behind; remote-cli exits 1 when it cannot connect.
+        # Sockets of closed windows may still accept and silently drop open requests; --status only answers when a window is attached.
         for socket in (command ls -t $sockets)
+            VSCODE_IPC_HOOK_CLI=$socket timeout 3 $cli --status >/dev/null 2>&1; or continue
             VSCODE_IPC_HOOK_CLI=$socket $cli $target 2>/dev/null; and return 0
         end
     end
