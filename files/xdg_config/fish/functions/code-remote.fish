@@ -11,11 +11,14 @@ function code-remote --description 'Open a directory or file in a connected VS C
     set -l runtime_dir /tmp
     set -q XDG_RUNTIME_DIR; and set runtime_dir $XDG_RUNTIME_DIR
     set -l sockets $runtime_dir/vscode-ipc-*.sock
+    # Socket files of exited servers linger; /proc/net/unix lists only the ones still bound.
+    test -r /proc/net/unix; and set sockets (string match -- "$runtime_dir/vscode-ipc-*.sock" (awk '{print $NF}' /proc/net/unix) | sort -u)
     if set -q clis[1]; and set -q sockets[1]
         set -l cli (command ls -t $clis)[1]
         # Sockets of closed windows may still accept and silently drop open requests; --status only answers when a window is attached.
-        for socket in (command ls -t $sockets)
-            VSCODE_IPC_HOOK_CLI=$socket timeout 3 $cli --status >/dev/null 2>&1; or continue
+        # Probe in parallel via sh so fish prints no job notices, and take the first socket that answers.
+        set -l socket (command sh -c 'cli=$1; shift; for s; do (VSCODE_IPC_HOOK_CLI=$s timeout 5 "$cli" --status >/dev/null 2>&1 && echo "$s") & done | head -n 1' sh $cli $sockets)
+        if set -q socket[1]
             VSCODE_IPC_HOOK_CLI=$socket $cli $target 2>/dev/null; and return 0
         end
     end
