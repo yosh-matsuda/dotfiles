@@ -14,9 +14,9 @@ command = '"${HERDR_BIN_PATH:-herdr}" workspace create --cwd "$HOME" --focus'
 
 [[keys.command]]
 key = "prefix+shift+c"
-# Runs on the pane's own server: WSL opens directly, SSH hosts show a code-remote link (popups drop OSC 8, panes keep it).
+# Runs on the pane's own server: WSL opens directly, SSH hosts reuse a connected VS Code window or show a code-remote link (popups drop OSC 8, panes keep it).
 type = "pane"
-command = '[ -n "$WSL_DISTRO_NAME" ] && exec code .; exec fish -c "code-remote; read -n 1 -P \"Press any key to close \" key"'
+command = '[ -n "$WSL_DISTRO_NAME" ] && exec code .; exec fish -c "set -l link (code-remote); and set -q link[1]; and printf \"%s\n\" \$link; and read -n 1 -P \"Press any key to close \" key"'
 description = "open pane cwd in VS Code"
 
 [ui]
