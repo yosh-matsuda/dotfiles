@@ -35,14 +35,18 @@ export async function updateTabNames(request, managed) {
         if (!tabs.has(tabId)) delete managed[tabId];
     }
 
+    const positions = new Map();
     for (const tab of snapshot.tabs) {
+        positions.set(tab.workspace_id, (positions.get(tab.workspace_id) ?? 0) + 1);
+        const position = positions.get(tab.workspace_id);
         const ownership = managed[tab.tab_id];
         if (ownership?.disabled) continue;
         if (ownership && ownership.label !== tab.label) {
             managed[tab.tab_id] = { disabled: true };
             continue;
         }
-        if (!ownership && tab.label !== String(tab.number)) continue;
+        // Default labels follow the tab's position; `number` comes from the tab id and can differ.
+        if (!ownership && tab.label !== String(position) && tab.label !== String(tab.number)) continue;
         const layout = snapshot.layouts.find(layout => layout.tab_id === tab.tab_id);
         if (!layout) continue;
         const { process_info: info } = await request('pane.process_info', {
