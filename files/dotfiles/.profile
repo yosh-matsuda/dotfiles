@@ -71,7 +71,8 @@ fi
 case "${TERM_PROGRAM:-}" in
 WezTerm | ghostty | iTerm.app) export LC_TERM_PROGRAM="$TERM_PROGRAM" ;;
 esac
-if [ -z "${TERM_PROGRAM:-}" ] && [ -n "${LC_TERM_PROGRAM:-}" ]; then
+# Only the herdr client needs it; in a pane, LC_TERM_PROGRAM names the terminal that started the server.
+if [ -z "${TERM_PROGRAM:-}" ] && [ -n "${LC_TERM_PROGRAM:-}" ] && [ "${HERDR_ENV:-}" != "1" ]; then
     export TERM_PROGRAM="$LC_TERM_PROGRAM"
 fi
 
