@@ -12,6 +12,11 @@
   },
   "includeCoAuthoredBy": false,
   "model": "claude-opus-5.5",
+  "statusLine": {
+    "command": "~/.copilot/statusline.sh",
+    "padding": 1,
+    "type": "command"
+  },
   "subagents": {
     "agents": {
       "code-review": {
