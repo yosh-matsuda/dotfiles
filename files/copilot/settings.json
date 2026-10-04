@@ -1,9 +1,11 @@
 {
   "beep": false,
   "defaultPermissionMode": "allow-all",
+  "effortLevel": "high",
   "hooks": {
-    "Stop": [
+    "agentStop": [
       {
+        "_vsCodeCompat": "Stop",
         "bash": "bash \"$HOME/.copilot/hooks/session-notify.sh\"",
         "timeoutSec": 10,
         "type": "command"
@@ -12,6 +14,7 @@
   },
   "includeCoAuthoredBy": false,
   "model": "claude-opus-5.5",
+  "showReasoning": false,
   "statusLine": {
     "command": "~/.copilot/statusline.sh",
     "padding": 1,
@@ -20,14 +23,29 @@
   "subagents": {
     "agents": {
       "code-review": {
+        "effortLevel": "high",
+        "model": "claude-opus-5.5"
+      },
+      "general-purpose": {
+        "contextTier": "default",
+        "effortLevel": "medium",
+        "model": "claude-opus-5.5"
+      },
+      "research": {
+        "contextTier": "default",
+        "effortLevel": "high",
         "model": "claude-opus-5.5"
       },
       "rubber-duck": {
+        "effortLevel": "high",
         "model": "gpt-6-astra"
       },
       "security-review": {
-        "model": "grok-4.7"
+        "contextTier": "default",
+        "effortLevel": "high",
+        "model": "claude-opus-5.5"
       }
     }
-  }
+  },
+  "theme": "github"
 }
