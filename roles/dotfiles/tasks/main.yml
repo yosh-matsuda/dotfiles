@@ -109,6 +109,7 @@
       - "{{ playbook_dir }}/files/scripts/copilot-settings-drift.py"
       - --json
   changed_when: false
+  check_mode: false
   register: dotfiles_copilot_settings_drift
 
 - name: Report Copilot CLI settings that are not tracked
