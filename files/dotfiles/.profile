@@ -78,7 +78,7 @@ fi
 
 IsInteractiveTerminal() {
     # if interactive shell
-    if [[ $- =~ i ]]; then
+    if case $- in *i*) true ;; *) false ;; esac; then
         # if FD is a file descriptor that is associated with a terminal.
         if test -t 1; then
             return 0
