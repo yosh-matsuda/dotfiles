@@ -124,13 +124,24 @@ def parent_pid(pid):
         return 0
 
 
+def launched_by_agent(pid):
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as handle:
+            return any(entry.startswith(b"COPILOT_AGENT_SESSION_ID=") for entry in handle.read().split(b"\0"))
+    except OSError:
+        return False
+
+
 # A copilot run by an agent's shell tool inherits the pane's herdr env and hooks;
-# only the outermost session belongs to the user.
+# only the outermost session belongs to the user. The parent chain alone misses a
+# copilot started under a detached runner, so the inherited agent env is checked too.
 copilot_ancestors = 0
 pid = os.getppid()
 while pid > 1:
     if is_copilot(pid):
         copilot_ancestors += 1
+        if launched_by_agent(pid):
+            raise SystemExit(0)
     pid = parent_pid(pid)
 if copilot_ancestors > 1:
     raise SystemExit(0)
