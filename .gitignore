@@ -17,6 +17,9 @@ local.hosts.yml
 # Ignore fish universal variables
 files/xdg_config/fish/fish_variables
 
+# Installed by the windows role with npm ci
+files/scripts/node_modules/
+
 # Ignore fish plugins
 files/xdg_config/fish/fish_plugins
 files/xdg_config/fish/conf.d/fzf.fish

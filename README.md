@@ -13,6 +13,7 @@ This repository applies shell settings, XDG config files, and CLI tools on Ubunt
 -   Docker on WSL
 -   herdr and automatic startup in interactive SSH terminals
 -   fish and fisher
+-   WezTerm and VS Code on the Windows side of WSL
 
 ## Requirements
 
@@ -81,10 +82,17 @@ One set of gestures holds in the VS Code integrated terminal and in WezTerm + he
 
 Drag-to-copy is the only copy gesture that every layer can share. herdr can copy a kept selection only on `Ctrl+C` (or `Cmd+C`), so [files/herdr/config.toml](files/herdr/config.toml) pins `copy_on_select = true`; with `false`, herdr would take `Ctrl+C` as copy while a selection exists. Copilot gets `"copyOnSelect": true` for the same reason. Pressing `Esc` twice within half a second stops a Copilot turn regardless of the highlight; the first press only shows a hint. A click outside the highlight clears it.
 
-The outer terminals are configured on the Windows side, outside this repository:
+The outer terminals run on Windows and are configured as described in [Windows applications](#windows-applications):
 
--   VS Code: set `"terminal.integrated.copyOnSelection": true`, and remove the Windows default `Ctrl+C` copy with `{ "key": "ctrl+c", "command": "-workbench.action.terminal.copyAndClearSelection" }` in `keybindings.json`. The Windows default `terminal.integrated.rightClickBehavior` is already `copyPaste`.
--   WezTerm: copy on every left-button release, including double-click, triple-click and `Alt` block selection, and trim the trailing spaces that block selection pads each line with. Bind right-click to copy-and-clear or paste, and move link opening to `Ctrl`+click with the `Ctrl` press bound to nothing so it does not reach the application. Bind `Ctrl+V` to paste, and let `Ctrl+C` and `Alt` keys reach the application, which means disabling the default `Alt+Enter` full-screen toggle. Bind `Ctrl+Shift+C` to a copy that does nothing on an empty selection; the default `CopyTo` has no such check and can overwrite what herdr copied with an empty string.
+-   VS Code: `"terminal.integrated.copyOnSelection": true`, and the Windows default `Ctrl+C` copy is removed in `keybindings.json`. The Windows default `terminal.integrated.rightClickBehavior` is already `copyPaste`.
+-   WezTerm: copies on every left-button release, including double-click, triple-click and `Alt` block selection, and trims the trailing spaces that block selection pads each line with. Right-click copies and clears the selection or pastes, and link opening moves to `Ctrl`+click with the `Ctrl` press bound to nothing so it does not reach the application. `Ctrl+V` pastes, and `Ctrl+C` and `Alt` keys reach the application, which means the default `Alt+Enter` full-screen toggle is disabled. `Ctrl+Shift+C` copies only a non-empty selection; the default `CopyTo` has no such check and can overwrite what herdr copied with an empty string.
+
+### Windows applications
+
+On WSL, the `windows` role writes into the Windows user profile through `/mnt/c`. Windows applications cannot read WSL symlinks, so the files are copied, and changes must be made in this repository and applied by running the playbook.
+
+-   WezTerm: [files/windows/wezterm/wezterm.lua](files/windows/wezterm/wezterm.lua) is copied to `%USERPROFILE%\.config\wezterm\wezterm.lua` and replaces it entirely. Values that differ per machine go into a generated `machine.lua` next to it; the default domain is the WSL distribution that runs the playbook. Edits made directly on the Windows side are overwritten.
+-   VS Code: only the keys in [files/windows/vscode](files/windows/vscode) are merged into `%APPDATA%\Code\User`; everything else stays with Settings Sync. When that directory does not exist, the merge is skipped with a message. Settings are overwritten key by key, and keybindings are appended when missing. The files are JSONC, so [files/scripts/vscode-settings-merge.mjs](files/scripts/vscode-settings-merge.mjs) edits them with `jsonc-parser`, the library VS Code itself uses, which keeps comments and formatting. The role installs it with `npm ci` into `files/scripts/node_modules` when it is missing.
 
 ### Tab names
 
@@ -117,7 +125,7 @@ Subagents write their messages into the parent transcript with an `agentId`, and
 
 herdr delivers agent notifications through the outer terminal (`[ui.toast] delivery = "terminal"`), for both finished and needs-attention events.
 
-Detection depends on `TERM_PROGRAM`, which SSH does not forward. The login profile mirrors it into `LC_TERM_PROGRAM` and restores it on the far side. On Windows, `WSLENV` must list `TERM_PROGRAM` for it to reach WSL.
+Detection depends on `TERM_PROGRAM`, which SSH does not forward. The login profile mirrors it into `LC_TERM_PROGRAM` and restores it on the far side. WezTerm adds `TERM_PROGRAM` to `WSLENV` itself when it starts a WSL domain, so no Windows environment variable is needed.
 
 `TERM_PROGRAM` is intentionally absent inside panes; only the attached client matters. Verify with `herdr notification show test`.
 

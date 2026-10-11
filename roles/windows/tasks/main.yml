@@ -1,0 +1,75 @@
+# Windows apps cannot read WSL symlinks on DrvFs, so files are copied instead.
+# DrvFs ignores chmod by default, so no mode is set to keep the tasks idempotent.
+- name: Configure Windows applications from WSL
+  when: is_wsl
+  block:
+  - name: Find the Windows user profile
+    ansible.builtin.shell:
+      cmd: wslpath -u "$({{ windows_cmd_path }} /c 'echo %USERPROFILE%' | tr -d '\r')"
+      chdir: /mnt/c
+    changed_when: false
+    check_mode: false
+    register: windows_profile
+
+  - name: Set the Windows home directory
+    ansible.builtin.set_fact:
+      windows_home: "{{ windows_profile.stdout }}"
+
+  - name: Ensure WezTerm config directory exists
+    ansible.builtin.file:
+      path: "{{ windows_wezterm_config_dir }}"
+      state: directory
+
+  - name: Copy WezTerm config
+    ansible.builtin.copy:
+      src: "{{ playbook_dir }}/files/windows/wezterm/wezterm.lua"
+      dest: "{{ windows_wezterm_config_dir }}/wezterm.lua"
+
+  - name: Write machine-specific WezTerm values
+    ansible.builtin.copy:
+      content: |
+        return { wsl_distro_name = {{ windows_wsl_distro_name | to_json }} }
+      dest: "{{ windows_wezterm_config_dir }}/machine.lua"
+
+  - name: Check VS Code user directory
+    ansible.builtin.stat:
+      path: "{{ windows_vscode_user_dir }}"
+    register: windows_vscode_user_dir_stat
+
+  - name: Report that VS Code is not installed
+    when: not (windows_vscode_user_dir_stat.stat.isdir | default(false))
+    ansible.builtin.debug:
+      msg: "VS Code user directory not found, skipped merging VS Code settings: {{ windows_vscode_user_dir }}"
+
+  - name: Merge tracked VS Code settings
+    when: windows_vscode_user_dir_stat.stat.isdir | default(false)
+    environment:
+      PATH: "{{ brew_bin_dir }}:{{ ansible_facts['env']['PATH'] }}"
+    block:
+    - name: Check the Node modules for the merge script
+      ansible.builtin.command:
+        cmd: npm ls --depth=0
+        chdir: "{{ windows_scripts_dir }}"
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      register: windows_npm_ls
+
+    - name: Install the Node modules for the merge script
+      when: windows_npm_ls.rc != 0
+      ansible.builtin.command:
+        cmd: npm ci --no-audit --no-fund
+        chdir: "{{ windows_scripts_dir }}"
+
+    - name: Merge tracked VS Code settings into the Windows user settings
+      ansible.builtin.command:
+        argv:
+        - node
+        - "{{ windows_scripts_dir }}/vscode-settings-merge.mjs"
+        - "{{ playbook_dir }}/files/windows/vscode/{{ item }}"
+        - "{{ windows_vscode_user_dir }}/{{ item }}"
+      loop:
+      - settings.json
+      - keybindings.json
+      register: windows_vscode_merge
+      changed_when: "'changed' in windows_vscode_merge.stdout"

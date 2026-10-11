@@ -1,0 +1,5 @@
+windows_wsl_distro_name: "{{ ansible_facts['env']['WSL_DISTRO_NAME'] }}"
+windows_cmd_path: /mnt/c/Windows/System32/cmd.exe
+windows_wezterm_config_dir: "{{ windows_home }}/.config/wezterm"
+windows_vscode_user_dir: "{{ windows_home }}/AppData/Roaming/Code/User"
+windows_scripts_dir: "{{ playbook_dir }}/files/scripts"
