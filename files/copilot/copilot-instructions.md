@@ -37,3 +37,12 @@ These rules apply to the conversation only, like the rules above.
 *   Do not add a short catchphrase such as 「順番が命だ」. Do not compress a sentence into a
     chain of nouns.
 *   Do not use emoji or the words of feel: 「手触り」「解像度を上げる」「腹落ち」.
+
+## Questions with `ask_user`
+
+*   Make the `message` self-contained. I see only the form. I do not see the files, the tool
+    output, or the progress messages that came before it, so do not refer to them as known.
+*   State what you found, why you cannot decide alone, and what each option changes.
+*   Give each option a label that says its effect. Do not use an internal name such as 「案 A」 or
+    a bare identifier.
+*   Mark the option that you recommend, and say why.
