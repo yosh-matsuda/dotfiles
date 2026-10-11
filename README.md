@@ -71,7 +71,10 @@ One set of gestures holds in the VS Code integrated terminal and in WezTerm + he
 | Action | Gesture | Exception |
 | --- | --- | --- |
 | Copy | Drag with the mouse; the text is copied when the button is released | Copilot keeps the copied text highlighted |
+| Copy a word or a line | Double-click or triple-click; copied on release like a drag | herdr documents double-click only |
 | Paste | `Ctrl+V` | |
+| Copy or paste with the right button | Right-click copies and clears the selection if there is one, and pastes otherwise | Right after a drag the selection is still there, so it copies again; click once first or use `Ctrl+V`. In herdr, right-click opens the pane menu, and `Shift`+right-click pastes through the outer terminal |
+| Open a link | `Ctrl`+click | |
 | Interrupt | `Ctrl+C`, which never copies; fish clears the line or interrupts the command, Copilot stops the turn | In Copilot, `Ctrl+C` copies again while a highlight remains, and cancels the `ask_user` question even with a selection; use `Esc` |
 | Select in the outer terminal | `Shift`+drag, which bypasses herdr and Copilot | In herdr the selection includes the sidebar and pane borders |
 | Block selection | `Alt`+drag | In herdr, `Shift+Alt`+drag |
@@ -80,8 +83,8 @@ Drag-to-copy is the only copy gesture that every layer can share. herdr can copy
 
 The outer terminals are configured on the Windows side, outside this repository:
 
--   VS Code: set `"terminal.integrated.copyOnSelection": true`, and remove the Windows default `Ctrl+C` copy with `{ "key": "ctrl+c", "command": "-workbench.action.terminal.copyAndClearSelection" }` in `keybindings.json`.
--   WezTerm: copy on left-button release, bind `Ctrl+V` to paste, and let `Ctrl+C` and `Alt` keys reach the application, which means disabling the default `Alt+Enter` full-screen toggle. Bind `Ctrl+Shift+C` to a copy that does nothing on an empty selection; the default `CopyTo` has no such check and can overwrite what herdr copied with an empty string.
+-   VS Code: set `"terminal.integrated.copyOnSelection": true`, and remove the Windows default `Ctrl+C` copy with `{ "key": "ctrl+c", "command": "-workbench.action.terminal.copyAndClearSelection" }` in `keybindings.json`. The Windows default `terminal.integrated.rightClickBehavior` is already `copyPaste`.
+-   WezTerm: copy on every left-button release, including double-click, triple-click and `Alt` block selection, and trim the trailing spaces that block selection pads each line with. Bind right-click to copy-and-clear or paste, and move link opening to `Ctrl`+click with the `Ctrl` press bound to nothing so it does not reach the application. Bind `Ctrl+V` to paste, and let `Ctrl+C` and `Alt` keys reach the application, which means disabling the default `Alt+Enter` full-screen toggle. Bind `Ctrl+Shift+C` to a copy that does nothing on an empty selection; the default `CopyTo` has no such check and can overwrite what herdr copied with an empty string.
 
 ### Tab names
 
