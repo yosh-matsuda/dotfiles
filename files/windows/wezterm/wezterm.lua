@@ -45,7 +45,7 @@ config.color_schemes = {
   }
 }
 config.color_scheme = 'base16-eighties-mod'
-config.bold_brightens_ansi_colors = 'No'
+config.bold_brightens_ansi_colors = 'BrightAndBold'
 
 -- -----------------------------------------------------------------------------
 -- Appearance: cursor
@@ -90,6 +90,16 @@ config.font = wezterm.font_with_fallback {
   -- { family = 'Twemoji Mozilla' },
 }
 config.font_rules = {
+  -- 基本フォントが Bold なので、既定色の太字は bright white で区別する
+  {
+    intensity = 'Bold',
+    italic = false,
+    -- 2 つ目の表を渡すと 1 つ目の weight は無視される
+    font = wezterm.font({
+      family = font_family,
+      harfbuzz_features = font_features,
+    }, { weight = 'Bold', foreground = '#F2F0EC' }),
+  },
   {
     intensity = 'Normal',
     italic = true,
@@ -428,6 +438,8 @@ wezterm.on('new-tab-button-click', function(window, pane, button)
     return false
   end
 end)
+
+config.tab_max_width = 32
 
 local SOLID_LEFT_ARROW = wezterm.nerdfonts.ple_lower_right_triangle
 local SOLID_RIGHT_ARROW = wezterm.nerdfonts.ple_upper_left_triangle
