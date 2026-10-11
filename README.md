@@ -74,12 +74,12 @@ One set of gestures holds in the VS Code integrated terminal and in WezTerm + he
 | Copy a word or a line | Double-click or triple-click; copied on release like a drag | herdr documents double-click only |
 | Paste | `Ctrl+V` | |
 | Copy or paste with the right button | Right-click copies and clears the selection if there is one, and pastes otherwise | Right after a drag the selection is still there, so it copies again; click once first or use `Ctrl+V`. In herdr, right-click opens the pane menu, and `Shift`+right-click pastes through the outer terminal |
-| Open a link | `Ctrl`+click | |
-| Interrupt | `Ctrl+C`, which never copies; fish clears the line or interrupts the command, Copilot stops the turn | In Copilot, `Ctrl+C` copies again while a highlight remains, and cancels the `ask_user` question even with a selection; use `Esc` |
+| Open a link | `Ctrl`+click | In herdr, `Ctrl`+click makes the herdr client run `xdg-open` on its own host, which is the remote host over SSH; `Shift+Ctrl`+click lets the outer terminal open the link instead |
+| Interrupt | `Ctrl+C`, which never copies; fish clears the line or interrupts the command, Copilot stops the turn | In Copilot, `Ctrl+C` copies again while a highlight remains, and cancels the `ask_user` question even with a selection; press `Esc` twice instead |
 | Select in the outer terminal | `Shift`+drag, which bypasses herdr and Copilot | In herdr the selection includes the sidebar and pane borders |
 | Block selection | `Alt`+drag | In herdr, `Shift+Alt`+drag |
 
-Drag-to-copy is the only copy gesture that every layer can share. herdr can copy a kept selection only on `Ctrl+C`, so [files/herdr/config.toml](files/herdr/config.toml) pins `copy_on_select = true`; with `false`, herdr would take `Ctrl+C` as copy while a selection exists. Copilot gets `"copyOnSelect": true` for the same reason. `Esc` stops a Copilot turn regardless of the highlight, and a click outside the highlight clears it.
+Drag-to-copy is the only copy gesture that every layer can share. herdr can copy a kept selection only on `Ctrl+C` (or `Cmd+C`), so [files/herdr/config.toml](files/herdr/config.toml) pins `copy_on_select = true`; with `false`, herdr would take `Ctrl+C` as copy while a selection exists. Copilot gets `"copyOnSelect": true` for the same reason. Pressing `Esc` twice within half a second stops a Copilot turn regardless of the highlight; the first press only shows a hint. A click outside the highlight clears it.
 
 The outer terminals are configured on the Windows side, outside this repository:
 
