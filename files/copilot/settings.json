@@ -1,5 +1,6 @@
 {
   "beep": false,
+  "copyOnSelect": true,
   "defaultPermissionMode": "allow-all",
   "effortLevel": "high",
   "hooks": {

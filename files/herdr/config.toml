@@ -23,6 +23,8 @@ command = '[ -n "$WSL_DISTRO_NAME" ] && exec code .; . "$HOME/.profile"; exec fi
 description = "open pane cwd in VS Code"
 
 [ui]
+# false makes herdr take Ctrl+C as copy while a selection exists; Ctrl+C must always reach the pane.
+copy_on_select = true
 # "auto" draws a fake cursor on WSL, which breaks IME composition anchoring.
 host_cursor = "native"
 tab_bar_position = "bottom"
