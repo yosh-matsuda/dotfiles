@@ -64,6 +64,25 @@ $ ansible-playbook site.yml --syntax-check
 -   Only [files/herdr/config.toml](files/herdr/config.toml) is managed. Do not commit session snapshots, logs, sockets, or other runtime state from `~/.config/herdr`.
 -   Existing tmux installations and configuration are left untouched and unmanaged.
 
+### Copy and paste
+
+One set of gestures holds in the VS Code integrated terminal and in WezTerm + herdr, for fish and for Copilot CLI alike:
+
+| Action | Gesture | Exception |
+| --- | --- | --- |
+| Copy | Drag with the mouse; the text is copied when the button is released | Copilot keeps the copied text highlighted |
+| Paste | `Ctrl+V` | |
+| Interrupt | `Ctrl+C`, which never copies; fish clears the line or interrupts the command, Copilot stops the turn | In Copilot, `Ctrl+C` copies again while a highlight remains, and cancels the `ask_user` question even with a selection; use `Esc` |
+| Select in the outer terminal | `Shift`+drag, which bypasses herdr and Copilot | In herdr the selection includes the sidebar and pane borders |
+| Block selection | `Alt`+drag | In herdr, `Shift+Alt`+drag |
+
+Drag-to-copy is the only copy gesture that every layer can share. herdr can copy a kept selection only on `Ctrl+C`, so [files/herdr/config.toml](files/herdr/config.toml) pins `copy_on_select = true`; with `false`, herdr would take `Ctrl+C` as copy while a selection exists. Copilot gets `"copyOnSelect": true` for the same reason. `Esc` stops a Copilot turn regardless of the highlight, and a click outside the highlight clears it.
+
+The outer terminals are configured on the Windows side, outside this repository:
+
+-   VS Code: set `"terminal.integrated.copyOnSelection": true`, and remove the Windows default `Ctrl+C` copy with `{ "key": "ctrl+c", "command": "-workbench.action.terminal.copyAndClearSelection" }` in `keybindings.json`.
+-   WezTerm: copy on left-button release, bind `Ctrl+V` to paste, and let `Ctrl+C` and `Alt` keys reach the application, which means disabling the default `Alt+Enter` full-screen toggle. Bind `Ctrl+Shift+C` to a copy that does nothing on an empty selection; the default `CopyTo` has no such check and can overwrite what herdr copied with an empty string.
+
 ### Tab names
 
 Interactive fish shells inside herdr name numbered tabs after the foreground command via [files/scripts/herdr-tab-names.mjs](files/scripts/herdr-tab-names.mjs). Manually renamed tabs are left alone. Open a new fish shell inside herdr to pick up updates.
