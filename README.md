@@ -43,7 +43,7 @@ Then run the playbook:
 $ ansible-playbook site.yml --ask-become-pass
 ```
 
-On Ubuntu 26.04 with sudo-rs, prefix the command with `ANSIBLE_BECOME_EXE=sudo.ws`.
+Ubuntu 26.04 ships sudo-rs as `sudo`, whose password prompt the Ansible sudo become plugin cannot detect. The first play in [site.yml](site.yml) checks each host for `/usr/bin/sudo.ws`, the original sudo, and uses it for become where it exists, so no `ANSIBLE_BECOME_EXE` is needed. Ad hoc `ansible -b` runs do not get this switch; add `-e ansible_become_exe=sudo.ws` for those hosts.
 
 Main settings live under [files](files). Package lists and shared variables are defined in [group_vars/all.yml](group_vars/all.yml). Paths are preconfigured in `ansible.cfg`, so run the commands from the repository root.
 

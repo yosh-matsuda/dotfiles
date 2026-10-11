@@ -1,3 +1,20 @@
+# Ubuntu 26.04+ ships sudo-rs as `sudo`, whose prompt the sudo become plugin cannot detect.
+- name: Select sudo executable for privilege escalation
+  hosts: all
+  gather_facts: false
+  tasks:
+  - name: Check for original sudo installed as sudo.ws
+    ansible.builtin.raw: test -x /usr/bin/sudo.ws
+    register: become_sudo_ws_check
+    changed_when: false
+    failed_when: false
+    check_mode: false
+
+  - name: Use sudo.ws for become
+    ansible.builtin.set_fact:
+      ansible_become_exe: /usr/bin/sudo.ws
+    when: become_sudo_ws_check.rc == 0
+
 - name: Configure dotfiles environment
   hosts: all
   gather_facts: yes
