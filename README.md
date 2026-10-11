@@ -80,6 +80,17 @@ $ python3 files/scripts/copilot-settings-drift.py
 
 `~/.copilot/hooks` is a symlink into this repository, so `herdr integration install copilot` writes into the working tree. Expect `files/copilot/hooks/herdr-agent-state.sh` to change when herdr updates.
 
+### Reply language
+
+[files/copilot/hooks/reply-language.mjs](files/copilot/hooks/reply-language.mjs) keeps the messages addressed to the user in Japanese. The instruction in `copilot-instructions.md` alone is not enough: after a context compaction the summary is in English, and the reply that follows English progress messages often turns English too. Progress messages between tool calls are left alone on purpose.
+
+-   `agentStop` reads the reply that ended the turn from the transcript and returns `decision: "block"` when it is not Japanese, which makes the agent write the reply again. The English reply is already on screen by then, so the Japanese one follows it, and `session-notify.sh` has already sent its notification before the rewrite starts. A turn that a block already forced (`stop_hook_active`, which the CLI passes as `false` or `true`) is never blocked again, so a reply that must stay English costs one rewrite at most. The search stops at the last `user.message`, so a reply of an earlier turn is never judged.
+-   `preToolUse` with `matcher: "ask_user"` denies a question that is not Japanese before it is shown. It checks the message, the `title` and `description` of each field, and the labels of the choices. The labels are mostly identifiers, so they fail only when they hold no kana at all.
+
+A text is Japanese when kana make up at least 15% of its letters, after code blocks (```` ``` ```` or `~~~`), inline code, URLs, and Markdown links without kana are removed. Kana appear in no other language, so Chinese fails like English, Russian, or Spanish. Texts under 20 letters pass. Measured on one long session, Japanese replies stay above 25% and English replies that quote Japanese terms stay below 13%.
+
+Subagents write their messages into the parent transcript with an `agentId`, and the hook skips those. Every failure exits 0 without output, because a `preToolUse` command hook that crashes denies the tool. The CLI reads `settings.json` at startup, so restart it after a change to the hooks.
+
 ### Notifications
 
 herdr delivers agent notifications through the outer terminal (`[ui.toast] delivery = "terminal"`), for both finished and needs-attention events.

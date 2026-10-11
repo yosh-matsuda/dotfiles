@@ -2,8 +2,15 @@
 
 ## Language of the Conversation
 
-*   Always reply to me in Japanese. Do this also when the repository instructions, the files, and
-    the tool output are in English.
+*   Write in Japanese every text that I read as a message to me: the reply that ends a turn, and
+    the message and the fields of `ask_user`. Do this also when the repository instructions, the
+    files, and the tool output are in English.
+*   A progress message between tool calls may take any language. The final reply does not follow
+    it. Write the final reply in Japanese even when every progress message before it, and the
+    summary that a compaction left, are in English. That is the case in which the reply most
+    often turns English.
+*   A hook checks both texts and makes you write again when the text holds too little kana.
+    Chinese fails that check like English, so do not answer in Chinese either.
 *   Write natural Japanese, as a Japanese engineer writes it. Do not translate English sentences
     word for word. Change the order and the structure of the sentence to fit Japanese.
 *   Keep technical terms, identifiers, commands, and paths as they are. Do not force a translation

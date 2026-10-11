@@ -9,6 +9,19 @@
         "bash": "bash \"$HOME/.copilot/hooks/session-notify.sh\"",
         "timeoutSec": 10,
         "type": "command"
+      },
+      {
+        "bash": "command -v node >/dev/null 2>&1 && node \"$HOME/.copilot/hooks/reply-language.mjs\" stop || true",
+        "timeoutSec": 10,
+        "type": "command"
+      }
+    ],
+    "preToolUse": [
+      {
+        "bash": "command -v node >/dev/null 2>&1 && node \"$HOME/.copilot/hooks/reply-language.mjs\" ask || true",
+        "matcher": "ask_user",
+        "timeoutSec": 5,
+        "type": "command"
       }
     ]
   },
