@@ -16,7 +16,7 @@ command = '"${HERDR_BIN_PATH:-herdr}" workspace create --cwd "$HOME" --focus'
 
 [[keys.command]]
 key = "prefix+shift+c"
-# Runs on the pane's own server: WSL opens directly, SSH hosts reuse a connected VS Code window or show a code-remote link (popups drop OSC 8, panes keep it).
+# Runs on the pane's own server: WSL opens directly, SSH hosts reuse a connected VS Code window or show a code-remote link; herdr >= 0.9.4 keeps OSC 8 from the outer terminal under mouse capture, so Shift+Ctrl+click opens the bare URI it also prints.
 # Pane commands ignore shell_mode; without ~/.profile, PATH resolves the system fish < 4.3, whose `read` resets the 4.3 uvar migration.
 # WSL is detected from the kernel: panes on a saved SSH machine exit 127 here when WSL_DISTRO_NAME is tested instead.
 type = "pane"
