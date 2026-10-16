@@ -75,7 +75,7 @@ One set of gestures holds in the VS Code integrated terminal and in WezTerm + he
 | Copy a word or a line | Double-click or triple-click; copied on release like a drag | herdr documents double-click only |
 | Paste | `Ctrl+V` | |
 | Copy or paste with the right button | Right-click copies and clears the selection if there is one, and pastes otherwise | Right after a drag the selection is still there, so it copies again; click once first or use `Ctrl+V`. In herdr, right-click opens the pane menu, and `Shift`+right-click pastes through the outer terminal |
-| Open a link | `Ctrl`+click | In herdr, `Ctrl`+click makes the herdr client run `xdg-open` on its own host, which is the remote host over SSH; `Shift+Ctrl`+click lets the outer terminal open the link instead |
+| Open a link | `Ctrl`+click | In herdr, `Ctrl`+click opens only `http(s)` links, in the browser of the host that runs the herdr client. `Shift+Ctrl`+click lets the outer terminal open a URL that is visible as text; since herdr 0.9.4, herdr no longer passes OSC 8 hyperlinks to the outer terminal while `ui.mouse_capture` is on, so a labeled link does not open this way. `code-remote` prints its `vscode://` URI as text for this reason |
 | Interrupt | `Ctrl+C`, which never copies; fish clears the line or interrupts the command, Copilot stops the turn | In Copilot, `Ctrl+C` copies again while a highlight remains, and cancels the `ask_user` question even with a selection; press `Esc` twice instead |
 | Select in the outer terminal | `Shift`+drag, which bypasses herdr and Copilot | In herdr the selection includes the sidebar and pane borders |
 | Block selection | `Alt`+drag | In herdr, `Shift+Alt`+drag |

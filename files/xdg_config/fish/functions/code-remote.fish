@@ -32,6 +32,7 @@ function code-remote --description 'Open a directory or file in a connected VS C
     else
         set uri "$uri:1"
     end
-    # herdr drops OSC 1337 but keeps OSC 8
-    printf '\e]8;;%s\e\\\\Open in VS Code: %s:%s\e]8;;\e\\\\\n' $uri $host $target
+    # herdr drops OSC 1337, and with mouse capture on (herdr >= 0.9.4) it no longer passes OSC 8 to the outer terminal
+    # and opens only http(s) links itself, so the bare URI is printed too for the outer terminal's own URL detection.
+    printf '\e]8;;%s\e\\\\Open in VS Code: %s:%s\e]8;;\e\\\\\n%s\n' $uri $host $target $uri
 end
