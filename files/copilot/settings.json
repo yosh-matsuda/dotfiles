@@ -3,6 +3,9 @@
   "copyOnSelect": true,
   "defaultPermissionMode": "allow-all",
   "effortLevel": "high",
+  "enabledFeatureFlags": {
+    "EXTENSIONS": true
+  },
   "hooks": {
     "agentStop": [
       {

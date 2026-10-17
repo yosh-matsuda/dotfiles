@@ -125,6 +125,14 @@ $ python3 files/scripts/copilot-settings-drift.py
 
 `~/.copilot/hooks` is a symlink into this repository, so `herdr integration install copilot` writes into the working tree. Expect `files/copilot/hooks/herdr-agent-state.sh` to change when herdr updates.
 
+### Forking into a herdr tab
+
+`/fork-tab [name]` forks the current Copilot session and opens the fork in a new herdr tab of the same workspace, with `copilot --resume=<id>`. Unlike `/fork`, the original tab stays on the original session, so each session runs in its own CLI process. Both tabs share the working directory; use `/fork worktree` when both sides will edit files.
+
+The command is the user extension [files/copilot/extensions/fork-tab/extension.mjs](files/copilot/extensions/fork-tab/extension.mjs), linked as `~/.copilot/extensions`. Copilot CLI loads extensions only with the `EXTENSIONS` feature flag, so `files/copilot/settings.json` sets `enabledFeatureFlags.EXTENSIONS`. Check that it is loaded with `/env`. The extension calls the experimental `sessions.fork` RPC through the SDK's private connection, because the SDK exposes no fork method to extensions; a CLI update can break it. Outside herdr the command only logs an error.
+
+A tab opened with a name keeps that label; without a name, [Tab names](#tab-names) labels it like any other tab.
+
 ### Reply language
 
 [files/copilot/hooks/reply-language.mjs](files/copilot/hooks/reply-language.mjs) keeps the messages addressed to the user in Japanese. The instruction in `copilot-instructions.md` alone is not enough: after a context compaction the summary is in English, and the reply that follows English progress messages often turns English too. Progress messages between tool calls are left alone on purpose.
