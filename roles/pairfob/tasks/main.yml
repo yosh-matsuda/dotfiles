@@ -1,0 +1,148 @@
+- name: Install Pairfob for phone access to herdr
+  when: "'pairfob' in group_names"
+  environment:
+    HERDR_BIN: "{{ pairfob_herdr_binary_path }}"
+    PATH: "{{ xdg_local_bin_dir }}:{{ brew_bin_dir }}:{{ ansible_facts['env']['PATH'] }}"
+    XDG_RUNTIME_DIR: "{{ pairfob_xdg_runtime_dir }}"
+  block:
+  - name: Fail on hosts without a systemd user service
+    when: ansible_facts['system'] != 'Linux'
+    ansible.builtin.fail:
+      msg: the pairfob role supports only Linux hosts
+
+  - name: Check the herdr executable for Pairfob
+    when: pairfob_herdr_binary_path is not none
+    ansible.builtin.stat:
+      path: "{{ pairfob_herdr_binary_path }}"
+    register: pairfob_herdr_binary
+
+  # Without a herdr on PATH the installer downloads a second one into
+  # ~/.local/bin, whose default server would split the sessions in two.
+  - name: Fail when herdr is not installed with Homebrew
+    when: pairfob_herdr_binary_path is none or not pairfob_herdr_binary.stat.exists
+    ansible.builtin.fail:
+      msg: herdr is not installed; the brew role must run before this role
+
+  # The user manager, and the Pairfob service with it, stops at the last logout
+  # unless lingering is on. The herdr server survives because it runs outside it.
+  - name: Keep the user service manager running without a login session
+    become: true
+    ansible.builtin.command:
+      argv:
+      - loginctl
+      - enable-linger
+      - "{{ ansible_facts['user_id'] }}"
+      creates: "/var/lib/systemd/linger/{{ ansible_facts['user_id'] }}"
+
+  - name: Ensure Pairfob systemd drop-in directory exists
+    ansible.builtin.file:
+      path: "{{ pairfob_systemd_dropin_dir }}"
+      state: directory
+      mode: "0755"
+
+  # The installer and `pairfob service install` rewrite pairfob.service and drop
+  # any variable added to it, so additions live in a drop-in. The service PATH
+  # lacks Homebrew, and a reinstall started from a herdr plugin pane may not
+  # find herdr to record it, so HERDR_BIN is pinned here as well.
+  - name: Configure the Pairfob service environment
+    ansible.builtin.copy:
+      dest: "{{ pairfob_systemd_dropin_dir }}/dotfiles.conf"
+      mode: "0644"
+      content: |
+        [Service]
+        Environment="HERDR_BIN={{ pairfob_herdr_binary_path }}"
+        {% if pairfob_vapid_subject %}
+        Environment="PAIRFOB_PUSH=1"
+        Environment="PAIRFOB_VAPID_SUBJECT={{ pairfob_vapid_subject }}"
+        {% endif %}
+    register: pairfob_dropin
+
+  # The default subject comes from local.vars.yml, which the dotfiles role loads.
+  - name: Report that push notifications are off
+    when: not pairfob_vapid_subject
+    ansible.builtin.debug:
+      msg: Pairfob push notifications are off; set dotfiles_git_user_email or pairfob_vapid_subject in local.vars.yml
+
+  - name: Fetch Pairfob release checksums
+    ansible.builtin.uri:
+      url: "{{ pairfob_download_base }}/SHA256SUMS"
+      return_content: true
+    register: pairfob_release_sums
+    check_mode: false
+
+  - name: Check the installed Pairfob binary
+    ansible.builtin.stat:
+      path: "{{ pairfob_binary_path }}"
+      checksum_algorithm: sha256
+    register: pairfob_binary
+
+  - name: Install Pairfob
+    when: not pairfob_binary.stat.exists
+    block:
+    - name: Download Pairfob install script
+      ansible.builtin.get_url:
+        url: "{{ pairfob_install_script_url }}"
+        dest: "{{ pairfob_install_script_path }}"
+        mode: "0644"
+    # Enrolls this computer with pairfob.com and installs the user service.
+    - name: Run Pairfob install script
+      ansible.builtin.command:
+        argv:
+        - sh
+        - "{{ pairfob_install_script_path }}"
+        - --prefix
+        - "{{ xdg_local_bin_dir }}"
+        - --no-install-herdr
+        - --non-interactive
+      register: pairfob_install
+    - name: Remove Pairfob install script
+      ansible.builtin.file:
+        path: "{{ pairfob_install_script_path }}"
+        state: absent
+
+  # `pairfob update` restarts the service even when nothing changed, so it runs
+  # only when the binary differs from the latest release.
+  - name: Update Pairfob
+    vars:
+      pairfob_release_sha256: "{{ pairfob_release_sums.content | regex_search('^([0-9a-f]{64}) +\\*?' ~ pairfob_artifact_name ~ '$', '\\1', multiline=true) | first }}"
+    when:
+    - pairfob_binary.stat.exists
+    - pairfob_binary.stat.checksum != pairfob_release_sha256
+    ansible.builtin.command:
+      argv:
+      - "{{ pairfob_binary_path }}"
+      - update
+    register: pairfob_update
+
+  # A fresh install already started the service with the drop-in in place.
+  - name: Restart Pairfob with the new service environment
+    when:
+    - pairfob_dropin.changed
+    - pairfob_install is skipped
+    ansible.builtin.systemd_service:
+      name: pairfob.service
+      scope: user
+      daemon_reload: true
+      state: restarted
+
+  - name: List herdr plugins
+    ansible.builtin.command:
+      argv:
+      - "{{ pairfob_herdr_binary_path }}"
+      - plugin
+      - list
+      - --json
+    register: pairfob_herdr_plugins
+    changed_when: false
+    check_mode: false
+
+  # Adds Pairfob's pairing and health actions to the herdr action menu.
+  - name: Install the Pairfob herdr plugin
+    when: pairfob_herdr_plugins.stdout is not search('"pairfob"')
+    ansible.builtin.command:
+      argv:
+      - "{{ pairfob_herdr_binary_path }}"
+      - plugin
+      - install
+      - --yes
+      - "{{ pairfob_plugin_repo }}"
