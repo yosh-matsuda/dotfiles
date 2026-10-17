@@ -12,7 +12,7 @@ This repository applies shell settings, XDG config files, and CLI tools on Ubunt
 -   pipx packages
 -   Docker on WSL
 -   herdr and automatic startup in interactive SSH terminals
--   Pairfob for phone access to herdr on selected hosts
+-   Pairfob for phone access to herdr on Ubuntu
 -   fish and fisher
 -   WezTerm and VS Code on the Windows side of WSL
 
@@ -68,17 +68,7 @@ $ ansible-playbook site.yml --syntax-check
 
 ### Pairfob
 
-[Pairfob](https://github.com/arronKler/pairfob) lets a phone browser watch and drive the herdr agents of a host. Each host dials out to the relay at `pairfob.com`, so it needs no inbound port or VPN, and the session is end-to-end encrypted. The `pairfob` role runs only on hosts in the `pairfob` inventory group:
-
-```yaml
-all:
-  children:
-    pairfob:
-      hosts:
-        my-server:
-```
-
-Add each host whose herdr server runs agents that the phone should reach; a host that is asleep or offline stays on the phone's list until it is back. Each host keeps its own identity, so the phone pairs with each one and switches between them.
+[Pairfob](https://github.com/arronKler/pairfob) lets a phone browser watch and drive the herdr agents of a host. Each host dials out to the relay at `pairfob.com`, so it needs no inbound port or VPN, and the session is end-to-end encrypted. Every Ubuntu host that gets herdr from `brew_packages` gets Pairfob as well, including WSL. A host that is asleep or offline stays on the phone's list until it is back. Each host keeps its own identity, so the phone pairs with each one and switches between them. macOS hosts are skipped, because the role relies on `loginctl` and a systemd drop-in.
 
 -   The role runs after `prerequisite`, `dotfiles`, and `brew` in [site.yml](site.yml): it downloads into `~/tmp`, reads the e-mail address from `local.vars.yml` that the `dotfiles` role loads, and fails when the Homebrew herdr is missing.
 -   The role installs the binary into `~/.local/bin` with the official installer, which also enrolls the host and installs the `pairfob.service` user service, and adds the Pairfob herdr plugin for its action menu. Later runs call `pairfob update` only when the binary differs from the latest release.
