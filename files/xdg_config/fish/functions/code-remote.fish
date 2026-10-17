@@ -7,9 +7,45 @@ function code-remote --description 'Open a directory or file in a connected VS C
     end
     set target (realpath -- $target); or return 1
 
-    set -l clis $HOME/.vscode-server/cli/servers/*/server/bin/remote-cli/code $HOME/.vscode-server/bin/*/bin/remote-cli/code
     set -l runtime_dir /tmp
     set -q XDG_RUNTIME_DIR; and set runtime_dir $XDG_RUNTIME_DIR
+
+    # A window behind others throttles its timers and answers the probe below only minutes later, yet acts on an open request at once.
+    # So find the extension hosts a window is attached to from this side alone: each shares a unix socket with the window's Remote-SSH
+    # exec server (command-shell), or without one, holds a TCP connection to the port its server listens on.
+    if command -q ss; and command -q pgrep
+        set -l hosts (pgrep -u (id -u) -f -- 'bootstrap-fork --type=extensionHost')
+        set -l shells (pgrep -u (id -u) -f -- '/code-[0-9a-f]+ command-shell ')
+        set -l parents
+        for h in $hosts
+            set -a parents $h:(command ps -o ppid= -p $h | string trim)
+        end
+        set -l attached (command ss -Hanp -A tcp,unix_stream 2>/dev/null | awk -v dir=$runtime_dir/vscode-ipc- -v hosts=" $hosts " -v shells=" $shells " -v parents="$parents" '
+            function port(a) { sub(/.*:/, "", a); return a }
+            BEGIN { n = split(parents, p, " "); for (i = 1; i <= n; i++) { split(p[i], q, ":"); parent[q[1]] = q[2] } }
+            !match($0, /pid=[0-9]+/) { next }
+            { pid = substr($0, RSTART + 4, RLENGTH - 4) }
+            $1 == "u_str" && $2 == "LISTEN" && index($5, dir) == 1 { cli[pid] = $5 }
+            $1 == "u_str" && $2 == "ESTAB" { owner[$6] = pid; if (index(shells, " " pid " ")) linked[$8] = 1 }
+            $1 == "tcp" && $2 == "LISTEN" { listening[pid ":" port($5)] = 1 }
+            $1 == "tcp" && $2 == "ESTAB" { conns[pid] = conns[pid] " " port($5) }
+            END {
+                for (i in linked) if ((i in owner) && index(hosts, " " owner[i] " ")) live[owner[i]] = 1
+                for (h in parent) { n = split(conns[h], c, " "); for (i = 1; i <= n; i++) if ((parent[h] ":" c[i]) in listening) live[h] = 1 }
+                for (h in live) if (h in cli) print h, cli[h]
+            }')
+        if set -q attached[1]
+            set -l newest (command ps -o pid= --sort=start_time -p (string split -f1 ' ' -- $attached | string join ,) | string trim)[-1]
+            set -l socket (string replace -rf -- "^$newest " '' $attached)
+            # The extension host's own server ships the CLI that matches it.
+            set -l cli (command readlink /proc/$newest/exe | string replace -r '/[^/]*$' '')/bin/remote-cli/code
+            if set -q socket[1]; and test -x "$cli"
+                VSCODE_IPC_HOOK_CLI=$socket[1] $cli $target 2>/dev/null; and return 0
+            end
+        end
+    end
+
+    set -l clis $HOME/.vscode-server/cli/servers/*/server/bin/remote-cli/code $HOME/.vscode-server/bin/*/bin/remote-cli/code
     set -l sockets $runtime_dir/vscode-ipc-*.sock
     # Socket files of exited servers linger; /proc/net/unix lists only the ones still bound.
     test -r /proc/net/unix; and set sockets (string match -- "$runtime_dir/vscode-ipc-*.sock" (awk '{print $NF}' /proc/net/unix) | sort -u)
