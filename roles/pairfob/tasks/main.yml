@@ -55,7 +55,7 @@
 
   # The default subject comes from local.vars.yml, which the dotfiles role loads.
   - name: Report that push notifications are off
-    when: not pairfob_vapid_subject
+    when: pairfob_vapid_subject | length == 0
     ansible.builtin.debug:
       msg: Pairfob push notifications are off; set dotfiles_git_user_email or pairfob_vapid_subject in local.vars.yml
 
@@ -115,7 +115,7 @@
   # key, so only that host could notify. Every host therefore signs with the
   # key that Pairfob generated on the Ansible controller, read where it lies.
   - name: Share the VAPID key of the controller for Pairfob push
-    when: pairfob_vapid_subject
+    when: pairfob_vapid_subject | length > 0
     block:
     - name: Read the VAPID key of the controller
       delegate_to: localhost
