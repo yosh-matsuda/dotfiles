@@ -12,6 +12,7 @@ This repository applies shell settings, XDG config files, and CLI tools on Ubunt
 -   pipx packages
 -   Docker on WSL
 -   herdr and automatic startup in interactive SSH terminals
+-   Pairfob for phone access to herdr on selected hosts
 -   fish and fisher
 -   WezTerm and VS Code on the Windows side of WSL
 
@@ -64,6 +65,29 @@ $ ansible-playbook site.yml --syntax-check
 -   Apply config changes with `herdr server reload-config`.
 -   Only [files/herdr/config.toml](files/herdr/config.toml) is managed. Do not commit session snapshots, logs, sockets, or other runtime state from `~/.config/herdr`.
 -   Existing tmux installations and configuration are left untouched and unmanaged.
+
+### Pairfob
+
+[Pairfob](https://github.com/arronKler/pairfob) lets a phone browser watch and drive the herdr agents of a host. Each host dials out to the relay at `pairfob.com`, so it needs no inbound port or VPN, and the session is end-to-end encrypted. The `pairfob` role runs only on hosts in the `pairfob` inventory group:
+
+```yaml
+all:
+  children:
+    pairfob:
+      hosts:
+        my-server:
+```
+
+Install it on every host whose herdr server runs the agents, not on the WSL host that attaches to them with `herdr machine add`: the phone needs the host while the laptop is closed. Each host keeps its own identity, so the phone pairs with each one and switches between them.
+
+-   The role runs after `prerequisite`, `dotfiles`, and `brew` in [site.yml](site.yml): it downloads into `~/tmp`, reads the e-mail address from `local.vars.yml` that the `dotfiles` role loads, and fails when the Homebrew herdr is missing.
+-   The role installs the binary into `~/.local/bin` with the official installer, which also enrolls the host and installs the `pairfob.service` user service, and adds the Pairfob herdr plugin for its action menu. Later runs call `pairfob update` only when the binary differs from the latest release.
+-   The installer runs with `--no-install-herdr` and `HERDR_BIN` pointing at the Homebrew herdr. Without a herdr on `PATH` it would download a second one into `~/.local/bin`, whose default server would split the sessions.
+-   `loginctl enable-linger` keeps the user service manager running after the last logout. Without it, closing the laptop ends the SSH sessions and stops Pairfob, while the herdr server and its agents keep running unseen.
+-   The installer rewrites `pairfob.service` and drops any variable added to it, so additions go to `~/.config/systemd/user/pairfob.service.d/dotfiles.conf`. It pins `HERDR_BIN`, because the service `PATH` lacks Homebrew, and turns on push notifications with `PAIRFOB_VAPID_SUBJECT`, which defaults to `mailto:` and `dotfiles_git_user_email`. Set `pairfob_vapid_subject` in `local.vars.yml` to override it, or to an empty string to turn push off.
+-   When no herdr server is running, Pairfob starts one with `systemd-run --user` in its own unit, so restarting or updating Pairfob leaves the agents alone.
+
+Pairing needs the phone, so it is left to a shell on the host: run `pairfob pair`, open `https://pairfob.com/pair` on the phone, and scan the code. The **Pairfob: Pair a device** action in herdr does the same. For a second host, open **Settings → Switch computer → Add a computer** on the phone. Turn notifications on per host under **Settings → Notifications**. `pairfob doctor` diagnoses a host without changing anything.
 
 ### Copy and paste
 
