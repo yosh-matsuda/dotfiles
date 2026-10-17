@@ -4,8 +4,3 @@ all:
     wsl:
       ansible_connection: local
       ansible_python_interpreter: /usr/bin/python3
-  # Hosts that run Pairfob for phone access to herdr; see README.md
-  # children:
-  #   pairfob:
-  #     hosts:
-  #       my-server:
