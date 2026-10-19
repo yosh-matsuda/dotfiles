@@ -17,10 +17,10 @@ command = '"${HERDR_BIN_PATH:-herdr}" workspace create --cwd "$HOME" --focus'
 [[keys.command]]
 key = "prefix+shift+c"
 # Runs on the pane's own server: WSL opens directly, SSH hosts reuse a connected VS Code window or show a code-remote link; herdr >= 0.9.4 keeps OSC 8 from the outer terminal under mouse capture, so Shift+Ctrl+click opens the bare URI it also prints.
-# Pane commands ignore shell_mode; without ~/.profile, PATH resolves the system fish < 4.3, whose `read` resets the 4.3 uvar migration.
+# Pane commands ignore shell_mode, so load ~/.profile explicitly for both the WSL `code` command and the fish fallback.
 # WSL is detected from the kernel: panes on a saved SSH machine exit 127 here when WSL_DISTRO_NAME is tested instead.
 type = "pane"
-command = 'grep -qi microsoft /proc/sys/kernel/osrelease && exec code .; . "$HOME/.profile"; exec fish -c "set -l link (code-remote); and set -q link[1]; and printf \"%s\n\" \$link; and read -n 1 -P \"Press any key to close \" key"'
+command = '. "$HOME/.profile"; if grep -qi microsoft /proc/sys/kernel/osrelease; then exec code .; fi; exec fish -c "set -l link (code-remote); and set -q link[1]; and printf \"%s\n\" \$link; and read -n 1 -P \"Press any key to close \" key"'
 description = "open pane cwd in VS Code"
 
 [ui]
