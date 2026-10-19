@@ -66,6 +66,33 @@ if [ -d "$HOME/.local/bin" ]; then
     AddToPATH "$HOME/.local/bin"
 fi
 
+# WSL sets WSL_DISTRO_NAME and appends the Windows PATH only for processes it starts itself, so services of the
+# systemd user manager lack both, such as a herdr server that Pairfob starts. VS Code's `code` script then misses
+# WSL and hangs, so restore them from the UNC path of / and from cmd.exe.
+if [ -z "${WSL_DISTRO_NAME:-}" ] && grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+    wsl_root=$(wslpath -w / 2>/dev/null)
+    wsl_root=${wsl_root#\\\\*\\}
+    if [ -n "${wsl_root%\\}" ]; then
+        export WSL_DISTRO_NAME="${wsl_root%\\}"
+        # cmd.exe warns about a UNC working directory, so it starts from a Windows drive.
+        win_path=$(cd /mnt/c 2>/dev/null && /mnt/c/Windows/System32/cmd.exe /d /c 'echo %PATH%' </dev/null 2>/dev/null | tr -d '\r')
+        old_ifs=$IFS
+        IFS=';'
+        for win_dir in $win_path; do
+            [ -n "$win_dir" ] || continue
+            win_dir=$(wslpath -u "$win_dir" 2>/dev/null) || continue
+            case ":$PATH:" in
+            *":$win_dir:"*) : ;;
+            *) PATH="$PATH:$win_dir" ;;
+            esac
+        done
+        IFS=$old_ifs
+        export PATH
+        unset old_ifs win_dir win_path
+    fi
+    unset wsl_root
+fi
+
 # herdr picks its notification escape sequence from TERM_PROGRAM, which ssh drops;
 # relay it through LC_* because that is all sshd accepts by default.
 case "${TERM_PROGRAM:-}" in
