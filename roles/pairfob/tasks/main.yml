@@ -47,17 +47,7 @@
       content: |
         [Service]
         Environment="HERDR_BIN={{ pairfob_herdr_binary_path }}"
-        {% if pairfob_vapid_subject %}
-        Environment="PAIRFOB_PUSH=1"
-        Environment="PAIRFOB_VAPID_SUBJECT={{ pairfob_vapid_subject }}"
-        {% endif %}
     register: pairfob_dropin
-
-  # The default subject comes from local.vars.yml, which the dotfiles role loads.
-  - name: Report that push notifications are off
-    when: pairfob_vapid_subject | length == 0
-    ansible.builtin.debug:
-      msg: Pairfob push notifications are off; set dotfiles_git_user_email or pairfob_vapid_subject in local.vars.yml
 
   - name: Fetch Pairfob release checksums
     ansible.builtin.uri:
@@ -110,42 +100,11 @@
       - update
     register: pairfob_update
 
-  # The phone app holds one push subscription for pairfob.com, bound to the
-  # VAPID key of the host it was created on, and each host generates its own
-  # key, so only that host could notify. Every host therefore signs with the
-  # key that Pairfob generated on the Ansible controller, read where it lies.
-  - name: Share the VAPID key of the controller for Pairfob push
-    when: pairfob_vapid_subject | length > 0
-    block:
-    - name: Read the VAPID key of the controller
-      delegate_to: localhost
-      become: false
-      no_log: true
-      ansible.builtin.slurp:
-        src: "{{ pairfob_controller_vapid_path }}"
-      register: pairfob_controller_vapid
-      failed_when: false
-      check_mode: false
-
-    - name: Report that each host signs push with its own VAPID key
-      when: "'content' not in pairfob_controller_vapid"
-      ansible.builtin.debug:
-        msg: "{{ pairfob_controller_vapid_path }} is missing on the controller, so only the first host paired for push notifies the phone"
-
-    - name: Write the shared VAPID key
-      when: "'content' in pairfob_controller_vapid"
-      no_log: true
-      ansible.builtin.copy:
-        dest: "{{ pairfob_state_dir }}/vapid.json"
-        mode: "0600"
-        content: "{{ pairfob_controller_vapid.content | b64decode }}"
-      register: pairfob_vapid
-
   # A fresh install already started the service with the drop-in in place.
   - name: Restart Pairfob with the new service environment
-    when: >-
-      (pairfob_dropin.changed and pairfob_install is skipped)
-      or pairfob_vapid.changed | default(false)
+    when:
+    - pairfob_dropin.changed
+    - pairfob_install is skipped
     ansible.builtin.systemd_service:
       name: pairfob.service
       scope: user
