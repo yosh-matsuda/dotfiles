@@ -6,8 +6,4 @@ pairfob_artifact_name: "pairfob-linux-{{ 'arm64' if ansible_facts['architecture'
 pairfob_herdr_binary_path: "{{ brew_bin_dir }}/herdr"
 pairfob_plugin_repo: arronKler/pairfob
 pairfob_systemd_dropin_dir: "{{ xdg_config_home }}/systemd/user/pairfob.service.d"
-pairfob_state_dir: "{{ xdg_config_home }}/pairfob"
 pairfob_xdg_runtime_dir: "/run/user/{{ ansible_facts['user_uid'] }}"
-# include_vars outranks role vars, so local.vars.yml can override this.
-pairfob_vapid_subject: "{{ 'mailto:' ~ dotfiles_git_user_email if dotfiles_git_user_email is defined else '' }}"
-pairfob_controller_vapid_path: "{{ lookup('ansible.builtin.env', 'HOME') }}/.config/pairfob/vapid.json"
