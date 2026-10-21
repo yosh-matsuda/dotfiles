@@ -418,6 +418,50 @@ wezterm.on('gui-startup', function(cmd)
   snap_window_to_work_area(gui_window)
 end)
 
+-- 外付け GPU を外して OpenGL コンテキストを失うと、WezTerm は GUI ウィンドウだけを閉じて
+-- 作り直さない (spawned_mux_window に元の ID が残るため)。ペインと WSL シェルは見えないまま
+-- 残り、herdr の通知を重複して出すので、新しいプロセスで開き直してからこのプロセスを終了する。
+-- ウィンドウ生成中の一瞬を誤検出しないよう、2 回続けて検出したときだけ動かす
+local window_loss_check_seconds = 5
+local window_loss_hits = 0
+
+local function has_mux_window_in_active_workspace()
+  local workspace = wezterm.mux.get_active_workspace()
+  for _, mux_window in ipairs(wezterm.mux.all_windows()) do
+    if mux_window:get_workspace() == workspace then
+      return true
+    end
+  end
+  return false
+end
+
+local function restart_if_gui_windows_lost()
+  local ok, err = pcall(function()
+    if has_mux_window_in_active_workspace() and #wezterm.gui.gui_windows() == 0 then
+      window_loss_hits = window_loss_hits + 1
+    else
+      window_loss_hits = 0
+    end
+    if window_loss_hits >= 2 then
+      wezterm.log_error('all GUI windows were lost; restarting wezterm-gui')
+      wezterm.background_child_process {
+        wezterm.executable_dir .. '\\wezterm-gui.exe',
+        'start',
+        '--always-new-process',
+      }
+      os.exit(0)
+    end
+  end)
+  if not ok then
+    wezterm.log_error('window loss check failed: ' .. tostring(err))
+  end
+  wezterm.time.call_after(window_loss_check_seconds, restart_if_gui_windows_lost)
+end
+
+if wezterm.gui then
+  wezterm.time.call_after(window_loss_check_seconds, restart_if_gui_windows_lost)
+end
+
 -- -----------------------------------------------------------------------------
 -- Notifications
 -- -----------------------------------------------------------------------------
