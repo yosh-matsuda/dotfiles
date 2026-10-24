@@ -1,4 +1,4 @@
-function code-remote --description 'Open a directory or file in a connected VS Code window, else print a clickable Remote-SSH link'
+function code-remote --description 'Open a directory or file in VS Code over WSL or a connected window, else print a clickable Remote link'
     set -l target .
     test (count $argv) -gt 0; and set target $argv[1]
     if not test -e $target
@@ -6,6 +6,14 @@ function code-remote --description 'Open a directory or file in a connected VS C
         return 1
     end
     set target (realpath -- $target); or return 1
+
+    # On WSL, `code` (VS Code's Windows launcher, or the remote CLI in a VS Code terminal) opens the folder through the WSL remote;
+    # the Remote-SSH fallback below would reach this machine over SSH instead.
+    set -l wsl_distro
+    if string match -qi '*microsoft*' -- (cat /proc/sys/kernel/osrelease 2>/dev/null)
+        command -q code; and command code $target; and return 0
+        set -q WSL_DISTRO_NAME; and set wsl_distro $WSL_DISTRO_NAME
+    end
 
     set -l runtime_dir /tmp
     set -q XDG_RUNTIME_DIR; and set runtime_dir $XDG_RUNTIME_DIR
@@ -61,7 +69,12 @@ function code-remote --description 'Open a directory or file in a connected VS C
 
     set -l host (hostname -s)
     set -q VSCODE_SSH_HOST; and set host $VSCODE_SSH_HOST
-    set -l uri "vscode://vscode-remote/ssh-remote+$host"(string escape --style=url -- $target)
+    set -l authority ssh-remote+$host
+    if set -q wsl_distro[1]
+        set host "WSL: $wsl_distro"
+        set authority wsl+(string escape --style=url -- $wsl_distro)
+    end
+    set -l uri "vscode://vscode-remote/$authority"(string escape --style=url -- $target)
     # VS Code treats these paths as folders unless they end in :line, and reuses the last active window without windowId=_blank.
     if test -d $target
         set uri "$uri?windowId=_blank"
