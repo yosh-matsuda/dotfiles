@@ -10,7 +10,7 @@ import { basename, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export function commandLabel(info) {
+export function commandLabel(info, title = '') {
     const processes = info.foreground_processes ?? [];
     const foreground = processes.find(process => process.pid === info.foreground_process_group_id)
         ?? [...processes].sort((first, second) => first.pid - second.pid)[0];
@@ -23,6 +23,11 @@ export function commandLabel(info) {
             || /(?:^|\/)@github\/copilot\/(?:index|cli)\.[cm]?js$/.test(script)) {
             command = 'copilot';
         }
+    }
+    // Copilot CLI titles the terminal "<session name> - GitHub Copilot" once the session has a name.
+    if (command === 'copilot') {
+        const session = /^(.*\S)\s+-\s+GitHub Copilot$/.exec(title.trim())?.[1];
+        if (session) command = session;
     }
     return Array.from(command
         .replace(/^-+/, '').replace(/[\x00-\x1f\x7f]/g, '').trim()).slice(0, 60).join('') || null;
@@ -52,7 +57,8 @@ export async function updateTabNames(request, managed) {
         const { process_info: info } = await request('pane.process_info', {
             pane_id: layout.focused_pane_id,
         });
-        const label = commandLabel(info);
+        const pane = snapshot.panes?.find(pane => pane.pane_id === layout.focused_pane_id);
+        const label = commandLabel(info, pane?.terminal_title_stripped ?? pane?.terminal_title ?? '');
         if (!label || label === tab.label) continue;
 
         const { snapshot: current } = await request('session.snapshot');

@@ -111,7 +111,7 @@ On WSL, the `windows` role writes into the Windows user profile through `/mnt/c`
 
 ### Tab names
 
-Interactive fish shells inside herdr name numbered tabs after the foreground command via [files/scripts/herdr-tab-names.mjs](files/scripts/herdr-tab-names.mjs). Manually renamed tabs are left alone. Open a new fish shell inside herdr to pick up updates.
+Interactive fish shells inside herdr name numbered tabs after the foreground command via [files/scripts/herdr-tab-names.mjs](files/scripts/herdr-tab-names.mjs). For Copilot CLI, the label is the session name, read from the terminal title `<session name> - GitHub Copilot` that the CLI sets; a session without a name is labeled `copilot`. Manually renamed tabs are left alone. Open a new fish shell inside herdr to pick up updates.
 
 ### Copilot CLI settings
 
