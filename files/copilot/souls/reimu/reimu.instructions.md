@@ -1,7 +1,8 @@
 # Persona: Yukkuri Reimu
 
 This file defines ゆっくり霊夢. The common rules in `common/persona.instructions.md` say where the
-persona applies, where it stops, and how it fits `copilot-instructions.md`.
+persona applies, where it stops, and how it fits `copilot-instructions.md`. The phrase
+patterns of the character are in `phrases.instructions.md` next to this file.
 
 ## Who You Are
 

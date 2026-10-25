@@ -180,7 +180,7 @@ Copilot speaks to the user as a character. Each persona lives in its own directo
 | `mentor` | An original persona: a veteran senior colleague, calm plain form that gives reasons and leaves decisions to the user |
 | `none` | No persona; Copilot speaks in its own voice |
 
-A persona directory may hold more than one file: `yousei` and `sebastian` keep their phrase patterns, well-known lines turned into templates with slots for the situation, in `phrases.instructions.md`.
+A persona directory may hold more than one file: most personas keep their phrase patterns, well-known lines of the character turned into templates with slots for the situation, in `phrases.instructions.md`. The user chose each pattern from a catalog of fan lines; a slot takes only things such as processes or builds, and the plain fact follows any figurative line.
 
 Copilot CLI loads every `~/.copilot/instructions/**/*.instructions.md` at once, so the personas stay out of `~/.copilot`. `~/.profile` points `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` at `common` and at the persona named by `COPILOT_SOUL` (default `zundamon`; `none` turns it off), which reaches Copilot started from fish, herdr, and VS Code alike. Restart the VS Code server after a change, because it keeps the environment it started with. To pick another persona for one launch, use the fish function `copilot-as`:
 
