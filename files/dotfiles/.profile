@@ -103,6 +103,13 @@ if [ -z "${TERM_PROGRAM:-}" ] && [ -n "${LC_TERM_PROGRAM:-}" ] && [ "${HERDR_ENV
     export TERM_PROGRAM="$LC_TERM_PROGRAM"
 fi
 
+# Copilot CLI speaks as the persona in files/copilot/souls/$COPILOT_SOUL, or as itself with "none".
+# The common rules load with every persona; `copilot-as` in fish picks another one for a single launch.
+copilot_souls="$HOME/dotfiles/files/copilot/souls"
+if [ "${COPILOT_SOUL:-zundamon}" != "none" ] && [ -d "$copilot_souls/${COPILOT_SOUL:-zundamon}" ]; then
+    export COPILOT_CUSTOM_INSTRUCTIONS_DIRS="$copilot_souls/common,$copilot_souls/${COPILOT_SOUL:-zundamon}"
+fi
+unset copilot_souls
 IsInteractiveTerminal() {
     # if interactive shell
     if case $- in *i*) true ;; *) false ;; esac; then

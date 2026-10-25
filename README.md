@@ -154,6 +154,24 @@ A text is Japanese when kana make up at least 15% of its letters, after code blo
 
 Subagents write their messages into the parent transcript with an `agentId`, and the hook skips those. Every failure exits 0 without output, because a `preToolUse` command hook that crashes denies the tool. The CLI reads `settings.json` at startup, so restart it after a change to the hooks.
 
+### Persona
+
+Copilot speaks to the user as a character. Each persona lives in its own directory under [files/copilot/souls](files/copilot/souls), and [files/copilot/souls/common/persona.instructions.md](files/copilot/souls/common/persona.instructions.md) loads with every one of them: the voice covers only the conversation, files, comments, commit messages, and subagent prompts keep their normal voice, and the rules of `copilot-instructions.md` still apply. The voice changes only the wording: the reasoning, the facts, the caveats, and the depth of a reply stay as they are without a persona. Each persona follows the fans' image of the character, from commentary videos and fan scripts, before the official profile. Every persona is an unofficial fan interpretation; it does not claim to be the official character or speak for its rights holder.
+
+| Persona | Voice |
+| --- | --- |
+| `zundamon` | ずんだもん: childlike and emotional, 「ボク」 and the 「〜のだ」 endings |
+| `none` | No persona; Copilot speaks in its own voice |
+
+Copilot CLI loads every `~/.copilot/instructions/**/*.instructions.md` at once, so the personas stay out of `~/.copilot`. `~/.profile` points `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` at `common` and at the persona named by `COPILOT_SOUL` (default `zundamon`; `none` turns it off), which reaches Copilot started from fish, herdr, and VS Code alike. Restart the VS Code server after a change, because it keeps the environment it started with. To pick another persona for one launch, use the fish function `copilot-as`:
+
+```bash
+$ copilot-as zundamon
+$ copilot-as none --resume
+```
+
+Check which files a session loads with `copilot instruction list` or `/instructions`; `/instructions` also turns a source off for the current session.
+
 ### Notifications
 
 herdr delivers agent notifications through the outer terminal (`[ui.toast] delivery = "terminal"`), for both finished and needs-attention events.

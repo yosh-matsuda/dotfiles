@@ -69,6 +69,8 @@
     dotfiles_link_backup_existing: true
     dotfiles_link_excludes:
       - settings.json
+      # Personas load through COPILOT_CUSTOM_INSTRUCTIONS_DIRS, set in ~/.profile.
+      - souls
 
 # Copilot CLI rewrites settings.json atomically, which replaces a symlink with a
 # regular file, so the tracked defaults are merged into the live file instead.
