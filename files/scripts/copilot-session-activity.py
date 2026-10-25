@@ -17,10 +17,13 @@ import re
 import sys
 
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+STATE_VERSION = 2
 MARKERS = (b'"tool.execution_', b'"subagent.', b'"system.notification"', b'"session.')
 AGENT_ID = re.compile(r"agent_id: ([0-9a-f-]{36})")
+AGENT_STATUS = re.compile(r"agent_id: ([0-9a-f-]{36}), agent_type: [^,]+, status: (\w+)")
 SHELL_STARTED = re.compile(r"^<command (?:started in background with shellId: (\S+?)>|with shellId: (\S+) is still running)")
-SHELL_DONE = re.compile(r"^<shellId: (\S+) completed")
+# The output comes first, so this marker ends the result.
+SHELL_DONE = re.compile(r"<shellId: (\S+?) completed with exit code")
 
 
 def safe(name):
@@ -28,16 +31,18 @@ def safe(name):
 
 
 def empty_state():
-    return {"offset": 0, "inode": 0, "agents": [], "call_agents": {}, "shells": [], "detached": [], "tools": {},
-            "mode": "interactive", "compactions": 0}
+    return {"version": STATE_VERSION, "offset": 0, "inode": 0, "agents": [], "call_agents": {}, "shells": [],
+            "detached": [], "reads": {}, "tools": {}, "mode": "interactive", "compactions": 0}
 
 
 def load(path):
     try:
         with open(path, encoding="utf-8") as handle:
-            return {**empty_state(), **json.load(handle)}
+            state = json.load(handle)
     except (OSError, ValueError):
         return empty_state()
+    # A state from an older version of this script is rebuilt from the whole log.
+    return state if state.get("version") == STATE_VERSION else empty_state()
 
 
 def result_text(data):
@@ -56,6 +61,7 @@ def apply(state, event):
         tools.clear()
         state["call_agents"].clear()
         state["detached"].clear()
+        state["reads"].clear()
         state["mode"] = "interactive"
     elif kind == "session.mode_changed":
         state["mode"] = data.get("newMode") or state["mode"]
@@ -75,23 +81,35 @@ def apply(state, event):
             agents.add(args["agent_id"])
         elif name == "stop_bash" and args.get("shellId"):
             shells.discard(str(args["shellId"]))
+        elif name == "read_bash" and args.get("shellId"):
+            state["reads"][call_id] = str(args["shellId"])
     elif kind == "tool.execution_complete":
         call_id = data.get("toolCallId")
         name = tools.pop(call_id, None)
+        read_shell = state["reads"].pop(call_id, None)
         text = result_text(data)
         found = AGENT_ID.search(text)
         if call_id in agents and found:
             agents.discard(call_id)
             agents.add(found.group(1))
             state["call_agents"][call_id] = found.group(1)
+        if name in ("read_agent", "list_agents"):
+            # Waiting on an agent with read_agent consumes its idle notification.
+            for agent_id, status in AGENT_STATUS.findall(text):
+                if status == "running":
+                    agents.add(agent_id)
+                else:
+                    agents.discard(agent_id)
         started = SHELL_STARTED.match(text) if name == "bash" else None
         if call_id in state["detached"]:
             state["detached"].remove(call_id)
         elif started:
             shells.add(started.group(1) or started.group(2))
-        done = SHELL_DONE.match(text)
-        if done:
-            shells.discard(done.group(1))
+        if name in ("bash", "read_bash"):
+            shells.difference_update(SHELL_DONE.findall(text))
+        # A large output is replaced by a file reference that drops the marker.
+        if read_shell and "is still running" not in text:
+            shells.discard(read_shell)
     elif kind in ("subagent.completed", "subagent.failed"):
         call_id = data.get("toolCallId")
         agents.discard(call_id)
