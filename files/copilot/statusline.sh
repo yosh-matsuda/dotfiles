@@ -83,11 +83,11 @@ parts=()
 # Hidden while Copilot is working, then the time since it last did work.
 idle=$(( (now - last_active) / 60 ))
 if [ "$idle" -ge 1440 ]; then
-    parts+=("${dim}idle $((idle / 1440))d${reset}")
+    parts+=("idle $((idle / 1440))d")
 elif [ "$idle" -ge 60 ]; then
-    parts+=("${dim}idle $((idle / 60))h$(printf '%02d' $((idle % 60)))m${reset}")
+    parts+=("idle $((idle / 60))h$(printf '%02d' $((idle % 60)))m")
 elif [ "$idle" -ge 1 ]; then
-    parts+=("${dim}idle ${idle}m${reset}")
+    parts+=("idle ${idle}m")
 fi
 
 if [ -n "${cwd:-}" ]; then
@@ -135,7 +135,7 @@ if [ "$bg_total" -gt 0 ]; then
     parts+=("${orange}⧗ ${work}${reset}")
 fi
 
-[ "${compactions:-0}" -gt 0 ] && parts+=("${dim}⟳${compactions}${reset}")
+[ "${compactions:-0}" -gt 0 ] && parts+=("⟳${compactions}")
 
 out=""
 for part in "${parts[@]}"; do
