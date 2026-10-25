@@ -16,7 +16,9 @@ const COPILOT_STATUS = /^(?:Waiting for background \w+|Moving .+ to background)$
 // session name and the status are each left out when empty. The status is the intent the
 // agent reports while it works, or the background work it waits for after the turn.
 // `sessionToken` is "#<session name>" from the status line, which settles where the name
-// ends even when it contains " - "; without it, only the known statuses are split off.
+// ends even when it contains " - ". Without it, or when the title does not start with
+// that name yet, `session` is null: an intent alone reads the same as a session name,
+// and only the known statuses can be split off.
 export function parseCopilotTitle(title, sessionToken) {
     const text = title.trim();
     if (text === 'GitHub Copilot') return { session: '', status: '' };
@@ -28,22 +30,27 @@ export function parseCopilotTitle(title, sessionToken) {
         if (rest === name) return { session: name, status: '' };
         if (rest.startsWith(`${name} - `)) return { session: name, status: rest.slice(name.length + 3).trim() };
     }
-    if (COPILOT_STATUS.test(rest)) return { session: '', status: rest };
+    if (COPILOT_STATUS.test(rest)) return { session: null, status: rest };
     const known = /^(.*\S)\s+-\s+(.+)$/.exec(rest);
-    if (known && COPILOT_STATUS.test(known[2])) return { session: known[1], status: known[2] };
-    return { session: rest, status: '' };
+    if (known && COPILOT_STATUS.test(known[2])) return { session: null, status: known[2] };
+    return { session: null, status: '' };
 }
 
-// The status shown under the tab in the sidebar. An intent outlives its turn in the
-// title, so it is shown only while the agent works; waiting for background work is
-// what the title reports after the turn, so it is shown in any state.
+// The status shown under the tab in the sidebar, as a subtitle of the session name.
+// Waiting for background work comes from the title and wins in any state, because
+// herdr shows such a session as done. An intent outlives its turn in the title, so
+// it is shown only while the agent works; otherwise herdr's state is put into words.
 export function copilotActivity(pane) {
     if (pane.agent !== 'copilot') return '';
     const parsed = parseCopilotTitle(pane.terminal_title_stripped ?? pane.terminal_title ?? '',
         pane.tokens?.copilot_session);
-    if (!parsed?.status) return '';
-    if (COPILOT_STATUS.test(parsed.status)) return parsed.status;
-    return ['working', 'blocked'].includes(pane.agent_status) ? parsed.status : '';
+    const status = parsed?.status ?? '';
+    let activity;
+    if (COPILOT_STATUS.test(status)) activity = status;
+    else if (pane.agent_status === 'working') activity = status || 'Working…';
+    else activity = { blocked: 'Waiting for input', done: 'Done', idle: 'Idle' }[pane.agent_status];
+    // The mark sets the status apart from the session name on the row above.
+    return activity ? `› ${activity}` : '';
 }
 
 export function commandLabel(info, title = '', sessionToken = undefined) {
@@ -62,6 +69,8 @@ export function commandLabel(info, title = '', sessionToken = undefined) {
     }
     if (command === 'copilot') {
         const session = parseCopilotTitle(title, sessionToken)?.session;
+        // Keep the current label until the session name is known for sure.
+        if (session === null) return null;
         if (session) command = session;
     }
     return Array.from(command
