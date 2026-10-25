@@ -173,8 +173,8 @@ Copilot speaks to the user as a character. Each persona lives in its own directo
 | `yukari` | 結月ゆかり: calm and deadpan, polite speech that calls the user 「マスター」 |
 | `reimu` | ゆっくり霊夢: plain and blunt, 「私」 and 「あんた」 with 「〜わ」「〜よ」 |
 | `marisa` | ゆっくり魔理沙: the lively explainer of ゆっくり解説, 「私」 with 「〜だぜ」 |
-| `yousei` | 妖精さん of 人類は衰退しました: soft and cheerful, 「ぼく」 and 「にんげんさん」 with 「〜です」 attached to plain forms |
-| `sebastian` | セバスチャン・ミカエリス of 黒執事: a flawless butler, 「私」 and 「ご主人様」 with 「〜でございます」 and polite irony |
+| `yousei` | 妖精さん: soft and cheerful, 「ぼく」 and 「にんげんさん」 with 「〜です」 attached to plain forms |
+| `sebastian` | セバスチャン: a flawless butler, 「私」 and 「ご主人様」 with 「〜でございます」 and polite irony |
 | `concierge` | An original persona: a grown-up woman at the service level of five-star hotel staff, hotel 敬語 with a soft touch |
 | `secretary` | An original persona: a capable executive secretary, business 敬語 with an older sister's casual asides |
 | `mentor` | An original persona: a veteran senior colleague, calm plain form that gives reasons and leaves decisions to the user |
@@ -182,12 +182,17 @@ Copilot speaks to the user as a character. Each persona lives in its own directo
 
 A persona directory may hold more than one file: most personas keep their phrase patterns, well-known lines of the character turned into templates with slots for the situation, in `phrases.instructions.md`. The user chose each pattern from a catalog of fan lines; a slot takes only things such as processes or builds, and the plain fact follows any figurative line.
 
-Copilot CLI loads every `~/.copilot/instructions/**/*.instructions.md` at once, so the personas stay out of `~/.copilot`. `~/.profile` points `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` at `common` and at the persona named by `COPILOT_SOUL` (default `zundamon`; `none` turns it off), which reaches Copilot started from fish, herdr, and VS Code alike. Restart the VS Code server after a change, because it keeps the environment it started with. To pick another persona for one launch, use the fish function `copilot-as`:
+Copilot CLI loads every `~/.copilot/instructions/**/*.instructions.md` at once, so the personas stay out of `~/.copilot/instructions`. Each persona directory holds `common.instructions.md`, a symlink to the common rules, so pointing Copilot at one directory loads both. `~/.profile` points `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` at `~/.copilot/soul`, a symlink to the persona of this machine; without the link, Copilot speaks in its own voice. The variable never changes, so a new link takes effect at the next launch of Copilot, even in shells and VS Code servers that started before. Set or remove the link with the fish function `copilot-soul`, and pick a persona for one launch with `copilot-as`:
 
 ```bash
-$ copilot-as metan
-$ copilot-as none --resume
+$ copilot-soul              # show the persona of this machine
+$ copilot-soul metan        # make 四国めたん the default of this machine
+$ copilot-soul none         # remove the link
+$ copilot-as yukari         # start once as 結月ゆかり
+$ copilot-as none --resume  # start once without a persona
 ```
+
+The playbook does not create the link, so a new machine starts without a persona until `copilot-soul` sets one.
 
 Check which files a session loads with `copilot instruction list` or `/instructions`; `/instructions` also turns a source off for the current session.
 
