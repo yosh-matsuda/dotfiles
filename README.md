@@ -111,7 +111,11 @@ On WSL, the `windows` role writes into the Windows user profile through `/mnt/c`
 
 ### Tab names
 
-Interactive fish shells inside herdr name numbered tabs after the foreground command via [files/scripts/herdr-tab-names.mjs](files/scripts/herdr-tab-names.mjs). For Copilot CLI, the label is the session name, read from the terminal title `<session name> - GitHub Copilot` that the CLI sets; a session without a name is labeled `copilot`. Manually renamed tabs are left alone. Open a new fish shell inside herdr to pick up updates.
+Interactive fish shells inside herdr name numbered tabs after the foreground command via [files/scripts/herdr-tab-names.mjs](files/scripts/herdr-tab-names.mjs). For Copilot CLI, the label is the session name; a session without a name is labeled `copilot`. Manually renamed tabs are left alone.
+
+Copilot CLI titles the terminal `<session name> - <status> - GitHub Copilot`, where the status is the intent the agent reports while it works, or `Waiting for background agents` or `Waiting for background shells` when a turn ends with background work still running. The Copilot status line reports the session name to the pane as the token `$copilot_session`, prefixed with `#` so that an unnamed session still reports a value, and the script uses it to split the title even when the name contains ` - `. The status goes to the sidebar as `$activity` on the row under the tab: intents only while the agent works, because the title keeps the last intent after the turn, and waiting for background work in any state, in bold. The rows use only bold and dim, which follow any theme: the session name is bold, the status plain, and the agent row dim. herdr itself infers that such a session is done, so this row is what shows it still waits.
+
+One worker per herdr server holds a lock, so a new fish shell does not replace a running worker. To pick up updates, kill the PID in `~/.local/state/herdr-tab-names/*/worker.pid` and open a new fish shell inside herdr.
 
 ### Copilot session usage
 
