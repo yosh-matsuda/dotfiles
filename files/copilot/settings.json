@@ -20,14 +20,6 @@
         "type": "command"
       }
     ],
-    "notification": [
-      {
-        "bash": "python3 \"$HOME/dotfiles/files/scripts/copilot-session-activity.py\" hook",
-        "matcher": "agent_completed|agent_idle|shell_completed|shell_detached_completed",
-        "timeoutSec": 10,
-        "type": "command"
-      }
-    ],
     "preToolUse": [
       {
         "bash": "command -v node >/dev/null 2>&1 && node \"$HOME/.copilot/hooks/reply-language.mjs\" ask || true",

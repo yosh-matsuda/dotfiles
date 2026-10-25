@@ -6,25 +6,17 @@
       the tools the main agent is running, the mode, and the compaction count.
       SESSION_PATH is the session directory or its events.jsonl.
       files/copilot/statusline.sh calls this on every refresh.
-  hook
-      Run as a Copilot `notification` hook. When background work finishes,
-      report the new count to the herdr sidebar right away instead of waiting
-      for the next status line refresh.
 
 Only new bytes of the log are read on each call; the position and the derived
 state are kept in $XDG_RUNTIME_DIR per session.
 """
 
-import datetime
 import json
 import os
 import re
-import subprocess
 import sys
-import time
 
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
-COPILOT_HOME = os.environ.get("COPILOT_HOME") or os.path.expanduser("~/.copilot")
 MARKERS = (b'"tool.execution_', b'"subagent.', b'"system.notification"', b'"session.')
 AGENT_ID = re.compile(r"agent_id: ([0-9a-f-]{36})")
 SHELL_STARTED = re.compile(r"^<command (?:started in background with shellId: (\S+?)>|with shellId: (\S+) is still running)")
@@ -37,7 +29,7 @@ def safe(name):
 
 def empty_state():
     return {"offset": 0, "inode": 0, "agents": [], "call_agents": {}, "shells": [], "detached": [], "tools": {},
-            "mode": "interactive", "compactions": 0, "last_notification": ""}
+            "mode": "interactive", "compactions": 0}
 
 
 def load(path):
@@ -110,12 +102,11 @@ def apply(state, event):
             agents.discard(note.get("agentId"))
         elif note.get("type") in ("shell_completed", "shell_detached_completed"):
             shells.discard(str(note.get("shellId")))
-        state["last_notification"] = event.get("timestamp") or state["last_notification"]
     state["agents"], state["shells"] = sorted(a for a in agents if a), sorted(shells)
 
 
 def update(events_path, session_id):
-    # The status line passes the session directory; hooks pass events.jsonl itself.
+    # The status line passes the session directory rather than events.jsonl.
     if os.path.isdir(events_path):
         events_path = os.path.join(events_path, "events.jsonl")
     state_path = os.path.join(RUNTIME_DIR, f"copilot-activity-state-{safe(session_id)}.json")
@@ -150,59 +141,14 @@ def update(events_path, session_id):
     return state
 
 
-def events_path_for(session_id):
-    return os.path.join(COPILOT_HOME, "session-state", session_id, "events.jsonl")
-
-
-def epoch(timestamp):
-    try:
-        return datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp()
-    except (AttributeError, ValueError):
-        return 0.0
-
-
-def background_label(state):
-    count = len(state["agents"]) + len(state["shells"])
-    return f"⧗{count}" if count else ""
-
-
 def status(events_path, session_id):
     state = update(events_path, session_id)
     print("\x1f".join([str(len(state["agents"])), str(len(state["shells"])),
                        " ".join(state["tools"].values()), state["mode"], str(state["compactions"])]))
 
 
-def hook():
-    try:
-        payload = json.load(sys.stdin)
-    except ValueError:
-        return
-    session_id = payload.get("sessionId") or payload.get("session_id")
-    pane_id = os.environ.get("HERDR_PANE_ID")
-    if os.environ.get("HERDR_ENV") != "1" or not pane_id or not session_id:
-        return
-    events_path = payload.get("transcriptPath") or payload.get("transcript_path") or events_path_for(session_id)
-    # The hook can fire before the notification reaches the log; wait for it briefly.
-    started = time.time()
-    state = update(events_path, session_id)
-    while time.time() - started < 3 and epoch(state["last_notification"]) < started - 5:
-        time.sleep(0.25)
-        state = update(events_path, session_id)
-    subprocess.run([os.environ.get("HERDR_BIN_PATH") or "herdr", "pane", "report-metadata", pane_id,
-                    "--source", "copilot-statusline", "--seq", str(time.time_ns()),
-                    "--token", f"bg={background_label(state)}"],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    # The status line skips reports that match its cache, which no longer matches herdr.
-    try:
-        os.remove(os.path.join(RUNTIME_DIR, f"herdr-aic-{safe(pane_id)}"))
-    except OSError:
-        pass
-
-
 if __name__ == "__main__":
     if sys.argv[1:2] == ["status"] and len(sys.argv) == 4:
         status(sys.argv[2], sys.argv[3])
-    elif sys.argv[1:2] == ["hook"]:
-        hook()
     else:
-        sys.exit(f"usage: {sys.argv[0]} status SESSION_PATH SESSION_ID | hook")
+        sys.exit(f"usage: {sys.argv[0]} status SESSION_PATH SESSION_ID")

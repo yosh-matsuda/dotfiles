@@ -57,19 +57,18 @@ fi
 [[ ${bg_shells:-} =~ ^[0-9]+$ ]] || bg_shells=0
 [[ ${compactions:-} =~ ^[0-9]+$ ]] || compactions=0
 bg_total=$(( bg_agents + bg_shells ))
-bg=""; [ "$bg_total" -gt 0 ] && bg="⧗$bg_total"
 
-# Shows the session's AI credits, elapsed time, and background work as $aic, $elapsed,
-# and $bg in the herdr sidebar. The status line runs on every render, so a report is
-# sent only when a value changes, in the background.
+# Shows the session's AI credits and elapsed time as $aic and $elapsed in the herdr
+# sidebar. The status line runs on every render, so a report is sent only when a value
+# changes, in the background.
 if [ "${HERDR_ENV:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
-    state="${session_id:-} $aic $elapsed $bg"
+    state="${session_id:-} $aic $elapsed"
     cache="${XDG_RUNTIME_DIR:-/tmp}/herdr-aic-$(printf '%s' "$HERDR_PANE_ID" | tr -c 'A-Za-z0-9_-' '_')"
     if [ "$(cat "$cache" 2>/dev/null)" != "$state" ]; then
         printf '%s' "$state" >"$cache" 2>/dev/null
         "${HERDR_BIN_PATH:-herdr}" pane report-metadata "$HERDR_PANE_ID" \
             --source copilot-statusline --seq "$(date +%s%N)" \
-            --token "aic=$aic" --token "elapsed=$elapsed" --token "bg=$bg" \
+            --token "aic=$aic" --token "elapsed=$elapsed" \
             >/dev/null 2>&1 </dev/null &
     fi
 fi
@@ -135,7 +134,7 @@ if [ "$bg_total" -gt 0 ]; then
     parts+=("${orange}⧗ ${work}${reset}")
 fi
 
-[ "${compactions:-0}" -gt 0 ] && parts+=("⟳${compactions}")
+[ "${compactions:-0}" -gt 0 ] && parts+=("⟳ ${compactions}")
 
 out=""
 for part in "${parts[@]}"; do
