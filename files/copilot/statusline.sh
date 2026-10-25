@@ -37,26 +37,9 @@ if [ -n "${session_id:-}" ]; then
 fi
 
 [[ ${nano_aiu:-} =~ ^[0-9]+$ ]] || nano_aiu=0
-# The sidebar is narrow, so credits are rounded to thousands or millions there.
-aic="$(awk -v n="$nano_aiu" 'BEGIN {
-    c = n / 1e9
-    if (c < 999.5) printf "%d", c + 0.5
-    else if (c < 9950) printf "%.1fk", c / 1e3
-    else if (c < 999500) printf "%dk", c / 1e3 + 0.5
-    else printf "%.1fM", c / 1e6
-}') AIC"
 dur_ms=${dur_ms:-0}
 s=$(( ${dur_ms%.*} / 1000 ))
 elapsed=$(printf '%d:%02d' $((s / 3600)) $(((s % 3600) / 60)))
-# Units keep long sessions from reading like a clock time in the sidebar.
-m=$(( s / 60 ))
-if [ "$m" -ge 1440 ]; then
-    elapsed_short=$(printf '%dd%02dh' $((m / 1440)) $(((m % 1440) / 60)))
-elif [ "$m" -ge 60 ]; then
-    elapsed_short=$(printf '%dh%02dm' $((m / 60)) $((m % 60)))
-else
-    elapsed_short="${m}m"
-fi
 
 # Background agents and shells, running tools, mode, and compactions come from the
 # session log, which the helper reads incrementally.
@@ -71,19 +54,18 @@ fi
 [[ ${compactions:-} =~ ^[0-9]+$ ]] || compactions=0
 bg_total=$(( bg_agents + bg_shells ))
 
-# Shows the session's AI credits and elapsed time as $aic and $elapsed in the herdr
-# sidebar. $copilot_session is "#" plus the session name, so an unnamed session still
-# reports a value; herdr-tab-names.mjs uses it to split the terminal title. The status
-# line runs on every render, so a report is sent only when a value changes, in the
-# background.
+# Reports the session name to herdr as $copilot_session, "#" plus the name so that an
+# unnamed session still reports a value; herdr-tab-names.mjs uses it to split the
+# terminal title. The status line runs on every render, so a report is sent only when
+# the name changes, in the background.
 if [ "${HERDR_ENV:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
-    state="${session_id:-} $aic $elapsed_short #${session_name:-}"
-    cache="${XDG_RUNTIME_DIR:-/tmp}/herdr-aic-$(printf '%s' "$HERDR_PANE_ID" | tr -c 'A-Za-z0-9_-' '_')"
+    state="${session_id:-} #${session_name:-}"
+    cache="${XDG_RUNTIME_DIR:-/tmp}/herdr-copilot-session-$(printf '%s' "$HERDR_PANE_ID" | tr -c 'A-Za-z0-9_-' '_')"
     if [ "$(cat "$cache" 2>/dev/null)" != "$state" ]; then
         printf '%s' "$state" >"$cache" 2>/dev/null
         "${HERDR_BIN_PATH:-herdr}" pane report-metadata "$HERDR_PANE_ID" \
             --source copilot-statusline --seq "$(date +%s%N)" \
-            --token "aic=$aic" --token "elapsed=$elapsed_short" --token "copilot_session=#${session_name:-}" \
+            --token "copilot_session=#${session_name:-}" \
             >/dev/null 2>&1 </dev/null &
     fi
 fi
