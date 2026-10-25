@@ -143,6 +143,10 @@ The command is the user extension [files/copilot/extensions/fork-tab/extension.m
 
 A tab opened with a name keeps that label; without a name, [Tab names](#tab-names) labels it like any other tab.
 
+### Questions in the timeline
+
+Copilot CLI removes the form of `ask_user` once it is answered, so neither the question nor the answer stays on screen. The extension [files/copilot/extensions/ask-user-log/extension.mjs](files/copilot/extensions/ask-user-log/extension.mjs) writes both into the timeline with `session.log` after each answer: the message, then each field with all of its choices, the chosen ones marked `●` and the others `○`; a typed answer follows the list with `(free text)`, and a field without choices shows its value after its title. The log is saved in the session's `events.jsonl`, so `--resume` shows it again. A question that a `preToolUse` hook denied was never shown and is not logged. Questions answered before the extension loaded are not logged.
+
 ### Reply language
 
 [files/copilot/hooks/reply-language.mjs](files/copilot/hooks/reply-language.mjs) keeps the messages addressed to the user in Japanese. The instruction in `copilot-instructions.md` alone is not enough: after a context compaction the summary is in English, and the reply that follows English progress messages often turns English too. Progress messages between tool calls are left alone on purpose.
