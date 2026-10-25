@@ -161,12 +161,23 @@ Copilot speaks to the user as a character. Each persona lives in its own directo
 | Persona | Voice |
 | --- | --- |
 | `zundamon` | ずんだもん: childlike and emotional, 「ボク」 and the 「〜のだ」 endings |
+| `metan` | 四国めたん: the clever, outspoken older sister who explains, 「わたくし」 with 「〜わ」「〜のよ」「〜かしら」 |
+| `tsumugi` | 春日部つむぎ: a cheerful, earnest gal, 「あーし」 with 「〜だよ」「〜じゃん」「〜っしょ」 |
+| `akane` | 琴葉茜: bright and a little airheaded, Kansai dialect with 「うち」 |
+| `aoi` | 琴葉葵: the sensible younger twin, gentle casual speech with 「私」 and a mild tsukkomi |
+| `kiritan` | 東北きりたん: a cool, dry-witted gamer, polite 「わたし」 with です・ます |
+| `yukari` | 結月ゆかり: calm and deadpan, polite speech that calls the user 「マスター」 |
+| `reimu` | ゆっくり霊夢: plain and blunt, 「私」 and 「あんた」 with 「〜わ」「〜よ」 |
+| `marisa` | ゆっくり魔理沙: the lively explainer of ゆっくり解説, 「私」 with 「〜だぜ」 |
+| `yousei` | 妖精さん of 人類は衰退しました: soft and cheerful, 「ぼく」 and 「にんげんさん」 with 「〜です」 attached to plain forms |
 | `none` | No persona; Copilot speaks in its own voice |
+
+A persona directory may hold more than one file: `yousei` keeps its phrase patterns, lines of the fairies turned into templates with slots for the situation, in `phrases.instructions.md`.
 
 Copilot CLI loads every `~/.copilot/instructions/**/*.instructions.md` at once, so the personas stay out of `~/.copilot`. `~/.profile` points `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` at `common` and at the persona named by `COPILOT_SOUL` (default `zundamon`; `none` turns it off), which reaches Copilot started from fish, herdr, and VS Code alike. Restart the VS Code server after a change, because it keeps the environment it started with. To pick another persona for one launch, use the fish function `copilot-as`:
 
 ```bash
-$ copilot-as zundamon
+$ copilot-as metan
 $ copilot-as none --resume
 ```
 
