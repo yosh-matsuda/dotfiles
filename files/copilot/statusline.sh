@@ -4,7 +4,7 @@ set -u
 
 payload=$(cat)
 
-IFS=$'\x1f' read -r cwd model pct dur_ms added removed session_id nano_aiu transcript activity < <(
+IFS=$'\x1f' read -r cwd model pct dur_ms added removed session_id nano_aiu transcript session_name activity < <(
     jq -r '[
         (.cwd // ""),
         (.model.display_name // .model.id // "?"),
@@ -15,6 +15,7 @@ IFS=$'\x1f' read -r cwd model pct dur_ms added removed session_id nano_aiu trans
         (.session_id // ""),
         (.ai_used.total_nano_aiu // 0),
         (.transcript_path // ""),
+        (.session_name // "" | gsub("[\u0000-\u001f]"; " ")),
         ([.ai_used.total_nano_aiu, .cost.total_api_duration_ms, .context_window.total_tokens,
           .cost.total_lines_added, .cost.total_lines_removed] | tostring)
     ] | map(tostring) | join("\u001f")' <<<"$payload" 2>/dev/null
@@ -59,16 +60,18 @@ fi
 bg_total=$(( bg_agents + bg_shells ))
 
 # Shows the session's AI credits and elapsed time as $aic and $elapsed in the herdr
-# sidebar. The status line runs on every render, so a report is sent only when a value
-# changes, in the background.
+# sidebar. $copilot_session is "#" plus the session name, so an unnamed session still
+# reports a value; herdr-tab-names.mjs uses it to split the terminal title. The status
+# line runs on every render, so a report is sent only when a value changes, in the
+# background.
 if [ "${HERDR_ENV:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
-    state="${session_id:-} $aic $elapsed"
+    state="${session_id:-} $aic $elapsed #${session_name:-}"
     cache="${XDG_RUNTIME_DIR:-/tmp}/herdr-aic-$(printf '%s' "$HERDR_PANE_ID" | tr -c 'A-Za-z0-9_-' '_')"
     if [ "$(cat "$cache" 2>/dev/null)" != "$state" ]; then
         printf '%s' "$state" >"$cache" 2>/dev/null
         "${HERDR_BIN_PATH:-herdr}" pane report-metadata "$HERDR_PANE_ID" \
             --source copilot-statusline --seq "$(date +%s%N)" \
-            --token "aic=$aic" --token "elapsed=$elapsed" \
+            --token "aic=$aic" --token "elapsed=$elapsed" --token "copilot_session=#${session_name:-}" \
             >/dev/null 2>&1 </dev/null &
     fi
 fi

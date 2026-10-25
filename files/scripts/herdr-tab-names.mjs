@@ -10,7 +10,43 @@ import { basename, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export function commandLabel(info, title = '') {
+const COPILOT_STATUS = /^(?:Waiting for background \w+|Moving .+ to background)$/;
+
+// Copilot CLI titles the terminal "<session name> - <status> - GitHub Copilot", where the
+// session name and the status are each left out when empty. The status is the intent the
+// agent reports while it works, or the background work it waits for after the turn.
+// `sessionToken` is "#<session name>" from the status line, which settles where the name
+// ends even when it contains " - "; without it, only the known statuses are split off.
+export function parseCopilotTitle(title, sessionToken) {
+    const text = title.trim();
+    if (text === 'GitHub Copilot') return { session: '', status: '' };
+    const rest = /^(.*\S)\s+-\s+GitHub Copilot$/.exec(text)?.[1];
+    if (!rest) return null;
+    if (typeof sessionToken === 'string' && sessionToken.startsWith('#')) {
+        const name = sessionToken.slice(1).trim();
+        if (!name) return { session: '', status: rest };
+        if (rest === name) return { session: name, status: '' };
+        if (rest.startsWith(`${name} - `)) return { session: name, status: rest.slice(name.length + 3).trim() };
+    }
+    if (COPILOT_STATUS.test(rest)) return { session: '', status: rest };
+    const known = /^(.*\S)\s+-\s+(.+)$/.exec(rest);
+    if (known && COPILOT_STATUS.test(known[2])) return { session: known[1], status: known[2] };
+    return { session: rest, status: '' };
+}
+
+// The status shown under the tab in the sidebar. An intent outlives its turn in the
+// title, so it is shown only while the agent works; waiting for background work is
+// what the title reports after the turn, so it is shown in any state.
+export function copilotActivity(pane) {
+    if (pane.agent !== 'copilot') return '';
+    const parsed = parseCopilotTitle(pane.terminal_title_stripped ?? pane.terminal_title ?? '',
+        pane.tokens?.copilot_session);
+    if (!parsed?.status) return '';
+    if (COPILOT_STATUS.test(parsed.status)) return parsed.status;
+    return ['working', 'blocked'].includes(pane.agent_status) ? parsed.status : '';
+}
+
+export function commandLabel(info, title = '', sessionToken = undefined) {
     const processes = info.foreground_processes ?? [];
     const foreground = processes.find(process => process.pid === info.foreground_process_group_id)
         ?? [...processes].sort((first, second) => first.pid - second.pid)[0];
@@ -24,13 +60,23 @@ export function commandLabel(info, title = '') {
             command = 'copilot';
         }
     }
-    // Copilot CLI titles the terminal "<session name> - GitHub Copilot" once the session has a name.
     if (command === 'copilot') {
-        const session = /^(.*\S)\s+-\s+GitHub Copilot$/.exec(title.trim())?.[1];
+        const session = parseCopilotTitle(title, sessionToken)?.session;
         if (session) command = session;
     }
     return Array.from(command
         .replace(/^-+/, '').replace(/[\x00-\x1f\x7f]/g, '').trim()).slice(0, 60).join('') || null;
+}
+
+export async function updateActivity(request) {
+    const { snapshot } = await request('session.snapshot');
+    for (const pane of snapshot.panes ?? []) {
+        const activity = copilotActivity(pane);
+        if ((pane.tokens?.activity ?? '') === activity) continue;
+        await request('pane.report_metadata', {
+            pane_id: pane.pane_id, source: 'herdr-tab-names', tokens: { activity },
+        });
+    }
 }
 
 export async function updateTabNames(request, managed) {
@@ -58,7 +104,8 @@ export async function updateTabNames(request, managed) {
             pane_id: layout.focused_pane_id,
         });
         const pane = snapshot.panes?.find(pane => pane.pane_id === layout.focused_pane_id);
-        const label = commandLabel(info, pane?.terminal_title_stripped ?? pane?.terminal_title ?? '');
+        const label = commandLabel(info, pane?.terminal_title_stripped ?? pane?.terminal_title ?? '',
+            pane?.tokens?.copilot_session);
         if (!label || label === tab.label) continue;
 
         const { snapshot: current } = await request('session.snapshot');
@@ -199,6 +246,7 @@ async function watchSession(socketPath, managed, save) {
         running = true;
         try {
             await updateTabNames(request, managed);
+            await updateActivity(request);
             save();
             failures = 0;
         } catch (error) {
