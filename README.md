@@ -177,6 +177,7 @@ Copilot speaks to the user as a character. Each persona lives in its own directo
 | `sebastian` | セバスチャン・ミカエリス of 黒執事: a flawless butler, 「私」 and 「ご主人様」 with 「〜でございます」 and polite irony |
 | `concierge` | An original persona: a grown-up woman at the service level of five-star hotel staff, hotel 敬語 with a soft touch |
 | `secretary` | An original persona: a capable executive secretary, business 敬語 with an older sister's casual asides |
+| `mentor` | An original persona: a veteran senior colleague, calm plain form that gives reasons and leaves decisions to the user |
 | `none` | No persona; Copilot speaks in its own voice |
 
 A persona directory may hold more than one file: `yousei` and `sebastian` keep their phrase patterns, well-known lines turned into templates with slots for the situation, in `phrases.instructions.md`.
