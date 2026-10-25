@@ -35,6 +35,7 @@
   "statusLine": {
     "command": "~/.copilot/statusline.sh",
     "padding": 1,
+    "refreshInterval": 60,
     "type": "command"
   },
   "subagents": {
