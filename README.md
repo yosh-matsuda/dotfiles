@@ -113,6 +113,10 @@ On WSL, the `windows` role writes into the Windows user profile through `/mnt/c`
 
 Interactive fish shells inside herdr name numbered tabs after the foreground command via [files/scripts/herdr-tab-names.mjs](files/scripts/herdr-tab-names.mjs). For Copilot CLI, the label is the session name, read from the terminal title `<session name> - GitHub Copilot` that the CLI sets; a session without a name is labeled `copilot`. Manually renamed tabs are left alone. Open a new fish shell inside herdr to pick up updates.
 
+### Copilot session usage
+
+The Copilot status line [files/copilot/statusline.sh](files/copilot/statusline.sh) reports each session's elapsed time and AI credits to herdr as the pane tokens `$elapsed` and `$aic`, which the sidebar shows under each Copilot agent. `statusLine.refreshInterval` keeps both current while a session is idle; the clock at the start of the status line still shows when Copilot last did work, because the script keeps that time per session in `$XDG_RUNTIME_DIR` and moves it only when the usage counters change. The tab bar shows the account's AI credits for the current billing cycle from [files/scripts/copilot-cycle-aic.py](files/scripts/copilot-cycle-aic.py), which calls GitHub's internal `/copilot_internal/user` API with Copilot CLI's token every five minutes. The count covers every Copilot surface and machine; the entry disappears when the token or the API is unavailable.
+
 ### Copilot CLI settings
 
 `~/.copilot/settings.json` is merged, not symlinked, because Copilot CLI rewrites the file atomically. The merge is one way: keys tracked in `files/copilot/settings.json` are restored on every run, and local-only keys such as the `hooks` block are preserved. To keep a local change everywhere, copy it into `files/copilot/settings.json`.

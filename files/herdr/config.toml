@@ -31,11 +31,21 @@ host_cursor = "native"
 tab_bar_position = "bottom"
 tab_bar_right = [
 	{ type = "zoom" },
+	{ type = "command", command = "python3 \"$HOME/dotfiles/files/scripts/copilot-cycle-aic.py\"", interval_seconds = 300, timeout_seconds = 15 },
 	{ type = "hostname" },
 	{ type = "datetime", format = "%m/%d %H:%M" },
 ]
-tab_bar_right_separator = " "
+tab_bar_right_separator = " │ "
 prompt_new_tab_name = false
+
+[ui.sidebar.agents]
+row_gap = 0
+# $aic and $elapsed are reported by the Copilot status line (files/copilot/statusline.sh).
+rows = [
+	["state_icon", "workspace"],
+	["tab"],
+	["machine", "agent",{ token = "$elapsed", dim = true }, { token = "$aic", dim = true }],
+]
 
 [ui.toast]
 delivery = "terminal"
