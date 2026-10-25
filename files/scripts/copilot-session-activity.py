@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Track what a Copilot CLI session is doing from its events.jsonl.
 
-  status EVENTS_PATH SESSION_ID
+  status SESSION_PATH SESSION_ID
       Print, separated by U+001F: running background agents, running background shells,
       the tools the main agent is running, the mode, and the compaction count.
+      SESSION_PATH is the session directory or its events.jsonl.
       files/copilot/statusline.sh calls this on every refresh.
   hook
       Run as a Copilot `notification` hook. When background work finishes,
@@ -114,6 +115,9 @@ def apply(state, event):
 
 
 def update(events_path, session_id):
+    # The status line passes the session directory; hooks pass events.jsonl itself.
+    if os.path.isdir(events_path):
+        events_path = os.path.join(events_path, "events.jsonl")
     state_path = os.path.join(RUNTIME_DIR, f"copilot-activity-state-{safe(session_id)}.json")
     state = load(state_path)
     try:
@@ -124,9 +128,12 @@ def update(events_path, session_id):
         state = empty_state()
         state["inode"] = stat.st_ino
     if stat.st_size > state["offset"]:
-        with open(events_path, "rb") as handle:
-            handle.seek(state["offset"])
-            chunk = handle.read(stat.st_size - state["offset"])
+        try:
+            with open(events_path, "rb") as handle:
+                handle.seek(state["offset"])
+                chunk = handle.read(stat.st_size - state["offset"])
+        except OSError:
+            return state
         end = chunk.rfind(b"\n") + 1  # A line still being written is read next time.
         for line in chunk[:end].split(b"\n"):
             if not any(marker in line for marker in MARKERS):
@@ -198,4 +205,4 @@ if __name__ == "__main__":
     elif sys.argv[1:2] == ["hook"]:
         hook()
     else:
-        sys.exit(f"usage: {sys.argv[0]} status EVENTS_PATH SESSION_ID | hook")
+        sys.exit(f"usage: {sys.argv[0]} status SESSION_PATH SESSION_ID | hook")
