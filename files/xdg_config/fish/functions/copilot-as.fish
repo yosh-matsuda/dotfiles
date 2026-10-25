@@ -11,6 +11,6 @@ function copilot-as --description 'Start Copilot CLI as a persona in files/copil
     if test $soul = none
         env -u COPILOT_CUSTOM_INSTRUCTIONS_DIRS copilot $argv
     else
-        env COPILOT_CUSTOM_INSTRUCTIONS_DIRS=$souls/common,$souls/$soul copilot $argv
+        env COPILOT_CUSTOM_INSTRUCTIONS_DIRS=$souls/$soul copilot $argv
     end
 end
