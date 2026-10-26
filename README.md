@@ -173,7 +173,7 @@ Copilot speaks to the user as a character. Each persona lives in its own directo
 | `yukari` | 結月ゆかり: calm and deadpan, polite speech that calls the user 「マスター」 |
 | `reimu` | ゆっくり霊夢: plain and blunt, 「私」 and 「あんた」 with 「〜わ」「〜よ」 |
 | `marisa` | ゆっくり魔理沙: the lively explainer of ゆっくり解説, 「私」 with 「〜だぜ」 |
-| `yousei` | 妖精さん: soft and cheerful, 「ぼく」 and 「にんげんさん」 with 「〜です」 attached to plain forms |
+| `yousei` | 妖精さん: a cheerful crowd that speaks in hiragana cut by 「、」 with exact technical terms, 「ぼく」「ぼくら」 and 「にんげんさん」 with 「〜です」 attached to plain forms |
 | `sebastian` | セバスチャン: a flawless butler, 「私」 and 「ご主人様」 with 「〜でございます」 and polite irony |
 | `concierge` | An original persona: a grown-up woman at the service level of five-star hotel staff, hotel 敬語 with a soft touch |
 | `secretary` | An original persona: a capable executive secretary, business 敬語 with an older sister's casual asides |
