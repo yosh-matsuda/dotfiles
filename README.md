@@ -15,6 +15,7 @@ This repository applies shell settings, XDG config files, and CLI tools on Ubunt
 -   Pairfob for phone access to herdr on Ubuntu
 -   fish and fisher
 -   WezTerm and VS Code on the Windows side of WSL
+-   Windows applications, WSL, and fonts on a new Windows machine, through `winget configure`
 
 ## Requirements
 
@@ -28,6 +29,40 @@ Install the required Ansible collection before the first run:
 ```bash
 $ ansible-galaxy collection install -r collections/requirements.yml
 ```
+
+## Bootstrap
+
+[bootstrap.sh](bootstrap.sh) does the steps of [Requirements](#requirements) and [Usage](#usage) on a new machine: it installs Git and Ansible with apt on Ubuntu, or Ansible with Homebrew on macOS, clones this repository into `~/dotfiles`, creates `local.hosts.yml` from the example when it is missing, installs the collection, and runs the playbook. `local.vars.yml` is optional and is left to you. Each step is skipped when it is already done.
+
+```bash
+$ bash -c "$(curl -fsSL https://raw.githubusercontent.com/yosh-matsuda/dotfiles/main/bootstrap.sh)"
+```
+
+On Windows, run [bootstrap.ps1](bootstrap.ps1) from a normal PowerShell:
+
+```powershell
+> irm https://raw.githubusercontent.com/yosh-matsuda/dotfiles/main/bootstrap.ps1 | iex
+```
+
+1.  `winget configure` applies [.config/configuration.winget](.config/configuration.winget). winget asks for elevation once for the resources marked `securityContext: elevated`.
+2.  `wsl --install Ubuntu-26.04 --no-launch` installs the distribution unless it is registered. When Virtual Machine Platform was just enabled, this fails until Windows restarts; restart and run the script again.
+3.  When the distribution has no default user yet, its shell opens once: create the user, then run `exit`. The distribution creates the user only in its first interactive shell.
+4.  `bootstrap.sh` runs in the distribution.
+
+Pick another distribution or branch with `& ([scriptblock]::Create((irm <URL>))) -Distro Ubuntu-24.04 -Branch <branch>`.
+
+[.config/configuration.winget](.config/configuration.winget) declares Virtual Machine Platform, WSL, Git, VS Code, PowerShell 7, Coreutils for Windows, uv, the Visual C++ runtimes, the WezTerm nightly build, and the UDEV Gothic NF fonts that [wezterm.lua](files/windows/wezterm/wezterm.lua) uses. Check the machine against it without changing anything:
+
+```powershell
+> winget configure test -f .config\configuration.winget
+```
+
+-   Packages with `useLatest: true` are upgraded to the latest version whenever the configuration is applied, so rerunning `bootstrap.ps1` or `winget configure` works like `winget upgrade` for them, and `winget configure test` reports an outdated package. WSL is left out, because upgrading it restarts the WSL service and stops the running distributions; update it with `wsl --update`. VS Code is left out, because it updates itself.
+-   WezTerm and the fonts are installed by `Microsoft.DSC.Transitional/WindowsPowerShellScript` resources. The winget package `wez.wezterm.nightly` pins the SHA256 of an installer that the `nightly` tag replaces, so its install fails on a hash mismatch, and `wez.wezterm` is the 20240203 release. No winget package provides UDEV Gothic.
+-   The WezTerm test passes for any installed WezTerm, so a rerun never updates it. Run the nightly installer again to update.
+-   The same file serves x64 and Arm64 machines. On Arm64, winget picks the Arm64 installer of each package and falls back to x64 under emulation. WezTerm ships only an x64 build and runs emulated; the x64 Visual C++ runtime it needs installs on Arm64 too and carries the Arm64 binaries as well. uv for Arm64 depends on `Microsoft.VCRedist.2015+.arm64`, a separate package, so the elevated `VCRedistArm64` unit installs it before uv, which would otherwise raise a second elevation prompt. winget configure has no condition on a unit, so `VCRedistArm64` is a script that reports the desired state on other architectures and runs the `Microsoft.WinGet/Package` resource through `dsc.exe` on Arm64. Ubuntu, the Homebrew packages, Docker, and Pairfob all provide Arm64 builds for the playbook in WSL.
+-   uv runs natively on Arm64 and, since uv 0.13.0, prefers native Arm64 Python. Wheels follow the architecture of the interpreter, and many packages publish `win_amd64` wheels without `win_arm64` ones, such as `torch`, `pyarrow`, and `grpcio` on 2026-10-26. To use x86_64 Python, which runs emulated, set `UV_PYTHON_ARCH=x86_64` yourself, or request it per environment: `uv venv --python cpython-3.14-windows-x86_64`.
+-   winget 1.29 `winget configure validate` warns that no module is specified and that the units are not public, and exits with 1, for this file and for the files that `winget configure export` writes alike. `winget configure test` and `winget configure` are not affected.
 
 ## Usage
 
