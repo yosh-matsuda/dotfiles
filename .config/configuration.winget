@@ -1,0 +1,242 @@
+# yaml-language-server: $schema=https://aka.ms/configuration-dsc-schema/0.3
+# Windows applications and features that the dotfiles playbook in WSL relies on, for x64 and Arm64 machines.
+# Apply with `winget configure -f .config/configuration.winget`, or through bootstrap.ps1.
+# Check without changing anything with `winget configure test -f .config/configuration.winget`.
+# Packages with `useLatest: true` are also upgraded to the latest version, like `winget upgrade`.
+# WSL has none, because upgrading it restarts the WSL service and stops the running distributions;
+# update it with `wsl --update`. VS Code has none, because it updates itself.
+$schema: https://raw.githubusercontent.com/PowerShell/DSC/main/schemas/2023/08/config/document.json
+metadata:
+  winget:
+    processor:
+      identifier: dscv3
+resources:
+- name: VirtualMachinePlatform
+  type: Microsoft.Windows/OptionalFeatureList
+  metadata:
+    description: Enable Virtual Machine Platform for WSL 2
+    winget:
+      securityContext: elevated
+  properties:
+    features:
+    - featureName: VirtualMachinePlatform
+      state: Installed
+
+- name: WSL
+  type: Microsoft.WinGet/Package
+  metadata:
+    description: Install WSL
+    winget:
+      securityContext: elevated
+  dependsOn:
+  - VirtualMachinePlatform
+  properties:
+    id: Microsoft.WSL
+    source: winget
+    acceptAgreements: true
+
+- name: Git
+  type: Microsoft.WinGet/Package
+  metadata:
+    description: Install Git for Windows
+    winget:
+      securityContext: elevated
+  properties:
+    id: Git.Git
+    source: winget
+    acceptAgreements: true
+    useLatest: true
+
+- name: VSCode
+  type: Microsoft.WinGet/Package
+  metadata:
+    description: Install VS Code for the current user
+  properties:
+    id: Microsoft.VisualStudioCode
+    source: winget
+    acceptAgreements: true
+
+- name: PowerShell
+  type: Microsoft.WinGet/Package
+  metadata:
+    description: Install PowerShell 7
+  properties:
+    id: Microsoft.PowerShell
+    source: winget
+    acceptAgreements: true
+    useLatest: true
+
+- name: Coreutils
+  type: Microsoft.WinGet/Package
+  metadata:
+    description: Install Coreutils for Windows
+    winget:
+      securityContext: elevated
+  properties:
+    id: Microsoft.Coreutils
+    source: winget
+    acceptAgreements: true
+    useLatest: true
+
+# A portable package for the current user; the Visual C++ runtime it depends on needs elevation,
+# so the elevated VCRedist units install it first.
+- name: uv
+  type: Microsoft.WinGet/Package
+  metadata:
+    description: Install uv for the current user
+  dependsOn:
+  - VCRedist
+  - VCRedistArm64
+  properties:
+    id: astral-sh.uv
+    source: winget
+    acceptAgreements: true
+    useLatest: true
+
+- name: VCRedist
+  type: Microsoft.WinGet/Package
+  metadata:
+    description: Install the x64 Visual C++ runtime for WezTerm, and for uv on x64
+    winget:
+      securityContext: elevated
+  properties:
+    id: Microsoft.VCRedist.2015+.x64
+    source: winget
+    acceptAgreements: true
+    useLatest: true
+
+# uv for Arm64 depends on this separate package instead of the x64 one. winget configure cannot skip
+# a unit by architecture, so the script reports the desired state on other machines and otherwise
+# runs the Microsoft.WinGet/Package resource through dsc.exe.
+- name: VCRedistArm64
+  type: Microsoft.DSC.Transitional/WindowsPowerShellScript
+  metadata:
+    description: Install the Arm64 Visual C++ runtime that uv requires on Arm64
+    winget:
+      securityContext: elevated
+  properties:
+    input:
+      id: Microsoft.VCRedist.2015+.arm64
+      source: winget
+      acceptAgreements: true
+      useLatest: true
+    testScript: |
+      param($package)
+      # The registry holds the native architecture; an emulated process sees AMD64 in its environment.
+      $architecture = (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE
+      if ($architecture -ne 'ARM64') { return $true }
+      # Windows PowerShell drops the quotes inside a native argument, so the JSON goes through a file.
+      $inputFile = Join-Path $env:TEMP "dotfiles-$([guid]::NewGuid()).json"
+      $package | ConvertTo-Json -Compress | Set-Content -LiteralPath $inputFile -Encoding ASCII
+      try {
+        $ErrorActionPreference = 'Continue'
+        $result = dsc.exe resource test -r Microsoft.WinGet/Package --file $inputFile 2>$null
+        if ($LASTEXITCODE -ne 0) { throw "dsc.exe resource test failed with exit code $LASTEXITCODE" }
+      } finally {
+        Remove-Item -LiteralPath $inputFile -Force -ErrorAction SilentlyContinue
+      }
+      [bool](($result | Out-String) | ConvertFrom-Json).inDesiredState
+    setScript: |
+      param($package)
+      $inputFile = Join-Path $env:TEMP "dotfiles-$([guid]::NewGuid()).json"
+      $package | ConvertTo-Json -Compress | Set-Content -LiteralPath $inputFile -Encoding ASCII
+      try {
+        $ErrorActionPreference = 'Continue'
+        dsc.exe resource set -r Microsoft.WinGet/Package --file $inputFile 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "dsc.exe resource set failed with exit code $LASTEXITCODE" }
+      } finally {
+        Remove-Item -LiteralPath $inputFile -Force -ErrorAction SilentlyContinue
+      }
+
+# The winget package wez.wezterm.nightly pins the SHA256 of a file that the nightly tag replaces,
+# so its install fails on a hash mismatch; wez.wezterm is the 20240203 release.
+# The test passes for any installed WezTerm, so a rerun never replaces it; rerunning the installer updates it.
+- name: WezTerm
+  type: Microsoft.DSC.Transitional/WindowsPowerShellScript
+  metadata:
+    description: Install the WezTerm nightly build
+    winget:
+      securityContext: elevated
+  dependsOn:
+  - VCRedist
+  properties:
+    input:
+      url: https://github.com/wezterm/wezterm/releases/download/nightly/WezTerm-nightly-setup.exe
+      # The AppId of the WezTerm Inno Setup installer
+      uninstallKey: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{BCF6F0DA-5B9A-408D-8562-F680AE6E1EAF}_is1
+    getScript: |
+      param($config)
+      $item = Get-ItemProperty -LiteralPath $config.uninstallKey -ErrorAction SilentlyContinue
+      @{ installed = $null -ne $item; version = $item.DisplayVersion }
+    testScript: |
+      param($config)
+      Test-Path -LiteralPath $config.uninstallKey
+    setScript: |
+      param($config)
+      $ProgressPreference = 'SilentlyContinue'
+      $installer = Join-Path $env:TEMP 'WezTerm-nightly-setup.exe'
+      Invoke-WebRequest -UseBasicParsing -Uri $config.url -OutFile $installer
+      try {
+        $process = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait -PassThru
+        if ($process.ExitCode -ne 0) { throw "WezTerm installer exited with code $($process.ExitCode)" }
+      } finally {
+        Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+      }
+
+# wezterm.lua uses UDEV Gothic NFLG; no winget package provides UDEV Gothic.
+- name: UDEVGothicNF
+  type: Microsoft.DSC.Transitional/WindowsPowerShellScript
+  metadata:
+    description: Install the UDEV Gothic NF fonts for all users
+    winget:
+      securityContext: elevated
+  properties:
+    input:
+      version: v2.2.0
+      variants: [NF, NFLG, 35NF, 35NFLG]
+      styles: [Regular, Bold, Italic, BoldItalic]
+    getScript: |
+      param($config)
+      $fontsDir = Join-Path $env:windir 'Fonts'
+      $files = foreach ($variant in $config.variants) { foreach ($style in $config.styles) { "UDEVGothic$variant-$style.ttf" } }
+      @{ missing = @($files | Where-Object { -not (Test-Path -LiteralPath (Join-Path $fontsDir $_)) }) }
+    testScript: |
+      param($config)
+      $fontsDir = Join-Path $env:windir 'Fonts'
+      $registered = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
+      $missing = foreach ($variant in $config.variants) {
+        foreach ($style in $config.styles) {
+          $file = "UDEVGothic$variant-$style.ttf"
+          $name = "UDEV Gothic $variant $style (TrueType)"
+          if (-not (Test-Path -LiteralPath (Join-Path $fontsDir $file)) -or $registered.$name -ne $file) { $file }
+        }
+      }
+      @($missing).Count -eq 0
+    setScript: |
+      param($config)
+      $ProgressPreference = 'SilentlyContinue'
+      $fontsDir = Join-Path $env:windir 'Fonts'
+      $registryKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
+      $archiveName = "UDEVGothic_NF_$($config.version)"
+      $work = Join-Path $env:TEMP "dotfiles-$archiveName"
+      $zip = "$work.zip"
+      Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/yuru7/udev-gothic/releases/download/$($config.version)/$archiveName.zip" -OutFile $zip
+      try {
+        Expand-Archive -LiteralPath $zip -DestinationPath $work -Force
+        Add-Type -Namespace Dotfiles -Name Gdi32 -MemberDefinition '[DllImport("gdi32.dll", CharSet = CharSet.Unicode)] public static extern int AddFontResource(string file);'
+        foreach ($variant in $config.variants) {
+          foreach ($style in $config.styles) {
+            $file = "UDEVGothic$variant-$style.ttf"
+            $target = Join-Path $fontsDir $file
+            # A font in use cannot be overwritten, so an existing file is kept.
+            if (-not (Test-Path -LiteralPath $target)) {
+              Copy-Item -LiteralPath (Join-Path (Join-Path $work $archiveName) $file) -Destination $target
+            }
+            Set-ItemProperty -LiteralPath $registryKey -Name "UDEV Gothic $variant $style (TrueType)" -Value $file
+            # Lets running applications see the font without a new sign-in.
+            [void][Dotfiles.Gdi32]::AddFontResource($target)
+          }
+        }
+      } finally {
+        Remove-Item -LiteralPath $zip, $work -Recurse -Force -ErrorAction SilentlyContinue
+      }
