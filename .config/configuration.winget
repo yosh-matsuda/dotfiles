@@ -341,7 +341,8 @@ resources:
       Get-Process -Name 'kanata_windows_*' -ErrorAction SilentlyContinue | Stop-Process -Force
       if (Test-Path -Path (Join-Path $env:ProgramFiles "WinGet\Packages\$($package.oldPackageId)_*")) {
         $ErrorActionPreference = 'Continue'
-        winget.exe uninstall --id $package.oldPackageId --exact --scope machine --disable-interactivity | Out-Null
+        # The elevated context may not have accepted the source agreements, which stops uninstall with 0x8A150046.
+        winget.exe uninstall --id $package.oldPackageId --exact --source winget --scope machine --accept-source-agreements --disable-interactivity | Out-Null
         $ErrorActionPreference = 'Stop'
         if (Test-Path -Path (Join-Path $env:ProgramFiles "WinGet\Packages\$($package.oldPackageId)_*")) {
           throw "winget uninstall $($package.oldPackageId) failed with exit code $LASTEXITCODE"
