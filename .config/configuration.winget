@@ -11,16 +11,28 @@ metadata:
     processor:
       identifier: dscv3
 resources:
+# Microsoft.Windows/OptionalFeatureList cannot be used: winget installs DSC from Microsoft Store, and its
+# dism_dsc stops with "This resource currently is not supported when installed via Appx".
+# EnablePending counts as enabled: the feature takes effect after a restart, which bootstrap.ps1 asks for.
 - name: VirtualMachinePlatform
-  type: Microsoft.Windows/OptionalFeatureList
+  type: Microsoft.DSC.Transitional/WindowsPowerShellScript
   metadata:
     description: Enable Virtual Machine Platform for WSL 2
     winget:
       securityContext: elevated
   properties:
-    features:
-    - featureName: VirtualMachinePlatform
-      state: Installed
+    input:
+      featureName: VirtualMachinePlatform
+    getScript: |
+      param($feature)
+      $state = (Get-WindowsOptionalFeature -Online -FeatureName $feature.featureName).State
+      @{ featureName = $feature.featureName; state = "$state" }
+    testScript: |
+      param($feature)
+      "$((Get-WindowsOptionalFeature -Online -FeatureName $feature.featureName).State)" -in @('Enabled', 'EnablePending')
+    setScript: |
+      param($feature)
+      Enable-WindowsOptionalFeature -Online -FeatureName $feature.featureName -All -NoRestart | Out-Null
 
 - name: WSL
   type: Microsoft.WinGet/Package
