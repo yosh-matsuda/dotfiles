@@ -73,6 +73,16 @@ function Invoke-DotfilesBootstrap {
         }
     }
 
+    # WSL mounts the Windows drives with the uid of the default user when the instance starts. An instance started
+    # before the user existed, by the id check above, keeps them owned by root, so chmod fails with EPERM there
+    # and the playbook stops at the first copy into the Windows profile. Restarting the instance mounts them again.
+    $uid = "$(wsl.exe -d $Distro --exec id -u)".Trim()
+    $mountUid = "$(wsl.exe -d $Distro --exec stat -c '%u' /mnt/c)".Trim()
+    if ($mountUid -ne $uid) {
+        Write-Host "Restarting $Distro, whose /mnt/c is owned by uid $mountUid instead of $uid"
+        wsl.exe --terminate $Distro | Out-Null
+    }
+
     Write-Host "Running bootstrap.sh in $Distro as $user"
     # --exec passes the arguments as they are; with -- they go through the shell, which expands $ once more.
     wsl.exe -d $Distro --cd '~' --exec bash -c "curl -fsSL $rawBase/bootstrap.sh -o /tmp/dotfiles-bootstrap.sh && DOTFILES_BRANCH=$Branch bash /tmp/dotfiles-bootstrap.sh"

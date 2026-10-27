@@ -43,7 +43,7 @@ On Windows, run [bootstrap.ps1](bootstrap.ps1) from a normal PowerShell:
 2.  `winget configure` applies [.config/configuration.winget](.config/configuration.winget). winget asks for elevation once for the resources marked `securityContext: elevated`.
 3.  `wsl --install Ubuntu-26.04 --no-launch` installs the distribution unless it is registered. When Virtual Machine Platform was just enabled, this fails until Windows restarts; restart and run the script again.
 4.  When the distribution has no default user yet, its shell opens once: enter a user name and a password at the prompts of Ubuntu, then run `exit` at the shell prompt. The distribution creates the user only in its first interactive shell. The script continues in the same window; closing it or pressing `Ctrl+C` stops the script, and running the one-liner again skips the user that already exists.
-5.  `bootstrap.sh` runs in the distribution. It asks for the Linux password twice: for `sudo` before `apt-get`, and at `BECOME password:` of the playbook.
+5.  `bootstrap.sh` runs in the distribution. It asks for the Linux password twice: for `sudo` before `apt-get`, and at `BECOME password:` of the playbook. WSL mounts `/mnt/c` with the uid of the default user when the distribution starts, so an instance that started before the user existed has it owned by root, and the playbook fails at `Copy WezTerm config` with `Operation not permitted`. The script restarts the distribution with `wsl --terminate` first when the owner of `/mnt/c` differs from the user.
 
 Pick another distribution or branch with `& ([scriptblock]::Create((irm <URL>))) -Distro Ubuntu-24.04 -Branch <branch>`.
 
