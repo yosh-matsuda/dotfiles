@@ -265,11 +265,14 @@ resources:
         41, 0, 121, 0,
         0, 0, 0, 0]
 
-# kanata runs elevated so that its layer works in elevated windows too, so its executable and its config live
-# under Program Files, where only administrators can change them. The package installs in machine scope,
-# which the Microsoft.WinGet/Package resource cannot select. winget leaves the extracted files writable by the
-# installing user, so the unit resets their ACLs to those inherited from Program Files, and its test fails
-# while any account other than SYSTEM, Administrators, and TrustedInstaller can write to them.
+# kanata runs elevated so that its layer works in elevated windows too, so its executables and its config live
+# under Program Files, where only administrators can change them. The release is pinned: v1.12.0, the latest
+# one in winget, always compares its keys with the Windows key state by US virtual-key codes, and on JIS the
+# key right of l differs, so every ; raised an "Unexpected keycode" error. The prerelease adds
+# windows-sync-keystates none, which KanataConfig sets. The release publishes no checksums, so the hashes are
+# those of the files downloaded on 2026-10-27. The unit also removes jtroo.kanata_gui that earlier versions of
+# this file installed with winget, and keeps the files writable only by SYSTEM, Administrators, and
+# TrustedInstaller.
 - name: KanataPackage
   type: Microsoft.DSC.Transitional/WindowsPowerShellScript
   metadata:
@@ -281,13 +284,29 @@ resources:
   - VCRedistArm64
   properties:
     input:
-      id: jtroo.kanata_gui
-      source: winget
-      useLatest: true
+      version: v1.13.0-prerelease-1
+      installDir: kanata
+      oldPackageId: jtroo.kanata_gui
+      files:
+        x64:
+          kanata_windows_gui_winIOv2_x64.exe: f2d6166b0118523af67a11ad7cccd67231de41058cdb3fafe0405933a6276206
+          kanata_windows_tty_winIOv2_x64.exe: 3812373ccfd88ee8fd86c57a084e0dd4a615a6ff2e01db2934a8051d5bf225f3
+        arm64:
+          kanata_windows_gui_winIOv2_arm64.exe: afd3a564c3fce21cf21a158547855d68a162a3fdf2ea43159bcbaa9ee2e10512
+          kanata_windows_tty_winIOv2_arm64.exe: 7a48531715ec68a25fe9976eff8b2ac4589577c0f8a6d7e8ecb5376897d47ff1
     testScript: |
       param($package)
-      $directory = @(Get-Item -Path (Join-Path $env:ProgramFiles "WinGet\Packages\$($package.id)_*") -ErrorAction SilentlyContinue)[0]
+      # The registry holds the native architecture; an emulated process sees AMD64 in its environment.
+      $architecture = (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE
+      $arch = if ($architecture -eq 'ARM64') { 'arm64' } else { 'x64' }
+      $directory = Get-Item -LiteralPath (Join-Path $env:ProgramFiles $package.installDir) -ErrorAction SilentlyContinue
       if (-not $directory) { return $false }
+      foreach ($file in $package.files.$arch.PSObject.Properties) {
+        $path = Join-Path $directory.FullName $file.Name
+        if (-not (Test-Path -LiteralPath $path)) { return $false }
+        if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $file.Value) { return $false }
+      }
+      if (Test-Path -Path (Join-Path $env:ProgramFiles "WinGet\Packages\$($package.oldPackageId)_*")) { return $false }
       $trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
       # Write, delete, permission, and ownership rights, including GENERIC_ALL and GENERIC_WRITE
       $writeMask = 0x50000000 -bor [int][Security.AccessControl.FileSystemRights]'Write, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership'
@@ -299,51 +318,42 @@ resources:
           if (([int]$rule.FileSystemRights -band $writeMask) -and $rule.IdentityReference.Value -notin $trusted) { return $false }
         }
       }
-      # Windows PowerShell drops the quotes inside a native argument, so the JSON goes through a file.
-      $inputFile = Join-Path $env:TEMP "dotfiles-$([guid]::NewGuid()).json"
-      $package | ConvertTo-Json -Compress | Set-Content -LiteralPath $inputFile -Encoding ASCII
-      try {
-        $ErrorActionPreference = 'Continue'
-        $result = dsc.exe resource test -r Microsoft.WinGet/Package --file $inputFile 2>$null
-        if ($LASTEXITCODE -ne 0) { throw "dsc.exe resource test failed with exit code $LASTEXITCODE" }
-      } finally {
-        Remove-Item -LiteralPath $inputFile -Force -ErrorAction SilentlyContinue
-      }
-      [bool](($result | Out-String) | ConvertFrom-Json).inDesiredState
+      $true
     setScript: |
       param($package)
-      $packagesRoot = Join-Path $env:ProgramFiles 'WinGet\Packages'
-      $current = $false
-      if (Test-Path -Path (Join-Path $packagesRoot "$($package.id)_*")) {
-        $inputFile = Join-Path $env:TEMP "dotfiles-$([guid]::NewGuid()).json"
-        $package | ConvertTo-Json -Compress | Set-Content -LiteralPath $inputFile -Encoding ASCII
-        try {
-          $ErrorActionPreference = 'Continue'
-          $result = dsc.exe resource test -r Microsoft.WinGet/Package --file $inputFile 2>$null
-          if ($LASTEXITCODE -ne 0) { throw "dsc.exe resource test failed with exit code $LASTEXITCODE" }
-        } finally {
-          Remove-Item -LiteralPath $inputFile -Force -ErrorAction SilentlyContinue
-        }
-        $current = [bool](($result | Out-String) | ConvertFrom-Json).inDesiredState
-      }
-      $ErrorActionPreference = 'Continue'
-      if (-not $current) {
-        # A running kanata locks its executable; the KanataTask unit starts it again.
-        Get-Process -Name 'kanata_windows_gui_winIOv2_*' -ErrorAction SilentlyContinue | Stop-Process -Force
-        # install upgrades an installed package.
-        winget.exe install --id $package.id --exact --source $package.source --scope machine --accept-package-agreements --accept-source-agreements --disable-interactivity | Out-Null
-        # 0x8A15002B: no applicable upgrade
-        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) {
-          throw "winget install $($package.id) failed with exit code $LASTEXITCODE"
+      $ProgressPreference = 'SilentlyContinue'
+      $architecture = (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE
+      $arch = if ($architecture -eq 'ARM64') { 'arm64' } else { 'x64' }
+      $installDir = Join-Path $env:ProgramFiles $package.installDir
+      # A running kanata locks its executable; the KanataTask unit starts it again.
+      Get-Process -Name 'kanata_windows_*' -ErrorAction SilentlyContinue | Stop-Process -Force
+      if (Test-Path -Path (Join-Path $env:ProgramFiles "WinGet\Packages\$($package.oldPackageId)_*")) {
+        $ErrorActionPreference = 'Continue'
+        winget.exe uninstall --id $package.oldPackageId --exact --scope machine --disable-interactivity | Out-Null
+        $ErrorActionPreference = 'Stop'
+        if (Test-Path -Path (Join-Path $env:ProgramFiles "WinGet\Packages\$($package.oldPackageId)_*")) {
+          throw "winget uninstall $($package.oldPackageId) failed with exit code $LASTEXITCODE"
         }
       }
-      $directory = @(Get-Item -Path (Join-Path $packagesRoot "$($package.id)_*") -ErrorAction SilentlyContinue)[0]
-      if (-not $directory) {
-        throw "$($package.id) is not under $packagesRoot; check portablePackageMachineRoot in the winget settings"
+      $work = Join-Path $env:TEMP "dotfiles-kanata-$([guid]::NewGuid())"
+      New-Item -ItemType Directory -Force -Path $work | Out-Null
+      try {
+        $zip = Join-Path $work 'kanata.zip'
+        Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/jtroo/kanata/releases/download/$($package.version)/windows-binaries-$arch.zip" -OutFile $zip
+        Expand-Archive -LiteralPath $zip -DestinationPath $work -Force
+        New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+        foreach ($file in $package.files.$arch.PSObject.Properties) {
+          $source = Join-Path $work $file.Name
+          $hash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+          if ($hash -ne $file.Value) { throw "$($file.Name) has SHA256 $hash, expected $($file.Value)" }
+          Copy-Item -LiteralPath $source -Destination (Join-Path $installDir $file.Name) -Force
+        }
+      } finally {
+        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
       }
-      icacls.exe $directory.FullName /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+      icacls.exe $installDir /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
       if ($LASTEXITCODE -ne 0) { throw "icacls /setowner failed with exit code $LASTEXITCODE" }
-      icacls.exe $directory.FullName /reset /T /C /Q | Out-Null
+      icacls.exe $installDir /reset /T /C /Q | Out-Null
       if ($LASTEXITCODE -ne 0) { throw "icacls /reset failed with exit code $LASTEXITCODE" }
 
 - name: KanataConfig
@@ -357,11 +367,13 @@ resources:
       path: dotfiles\kanata.kbd
       # The Ctrl and CapsLock swap and the Henkan and Hankaku/Zenkaku swap are in ScancodeMap.
       # Muhenkan is only a layer key and sends nothing itself, so no tap timing can misfire.
-      # Keys outside defsrc never pass through kanata.
+      # Keys outside defsrc never pass through kanata. windows-sync-keystates none stops the check that compares
+      # the keys with US virtual-key codes, which misreads ; on JIS; see KanataPackage.
       content: |
         ;; Hold Muhenkan for the navigation layer.
         (defcfg
           process-unmapped-keys no
+          windows-sync-keystates none
         )
 
         (defsrc
@@ -412,18 +424,18 @@ resources:
   - KanataConfig
   properties:
     input:
-      packageId: jtroo.kanata_gui
+      installDir: kanata
       configPath: dotfiles\kanata.kbd
       taskPath: \dotfiles\
       taskName: kanata
       # Change it when the task definition below changes, so the test re-registers the task.
-      revision: 3
+      revision: 4
     testScript: |
       param($task)
       # The registry holds the native architecture; an emulated process sees AMD64 in its environment.
       $architecture = (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE
       $exeName = if ($architecture -eq 'ARM64') { 'kanata_windows_gui_winIOv2_arm64.exe' } else { 'kanata_windows_gui_winIOv2_x64.exe' }
-      $exe = @(Get-Item -Path (Join-Path $env:ProgramFiles "WinGet\Packages\$($task.packageId)_*\$exeName") -ErrorAction SilentlyContinue)[0]
+      $exe = Get-Item -LiteralPath (Join-Path (Join-Path $env:ProgramFiles $task.installDir) $exeName) -ErrorAction SilentlyContinue
       $config = Get-Item -LiteralPath (Join-Path $env:ProgramFiles $task.configPath) -ErrorAction SilentlyContinue
       if (-not $exe -or -not $config) { return $false }
       $description = "Starts kanata elevated at sign-in. Managed by dotfiles, revision $($task.revision): $($exe.FullName) --cfg `"$($config.FullName)`""
@@ -435,7 +447,7 @@ resources:
       param($task)
       $architecture = (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE
       $exeName = if ($architecture -eq 'ARM64') { 'kanata_windows_gui_winIOv2_arm64.exe' } else { 'kanata_windows_gui_winIOv2_x64.exe' }
-      $exe = @(Get-Item -Path (Join-Path $env:ProgramFiles "WinGet\Packages\$($task.packageId)_*\$exeName") -ErrorAction SilentlyContinue)[0]
+      $exe = Get-Item -LiteralPath (Join-Path (Join-Path $env:ProgramFiles $task.installDir) $exeName) -ErrorAction SilentlyContinue
       $config = Get-Item -LiteralPath (Join-Path $env:ProgramFiles $task.configPath) -ErrorAction SilentlyContinue
       if (-not $exe) { throw "$exeName was not found; the KanataPackage unit installs it" }
       if (-not $config) { throw "$($task.configPath) was not found; the KanataConfig unit writes it" }
