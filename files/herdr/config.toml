@@ -163,7 +163,7 @@ row_gap = 0
 rows = [
 	["state_icon", "workspace", "machine"],
 	[{ token = "tab", fg = "#f8f8f2", bold = true }],
-	[{ token = "state_text", rules = [{ starts_with = "›" }, { contains = "", hide = true }] }],
+	[{ token = "state_text", dim = true, rules = [{ starts_with = "›" }, { contains = "", hide = true }] }],
 ]
 
 [ui.toast]
