@@ -157,11 +157,13 @@ prompt_new_tab_name = false
 
 [ui.sidebar.agents]
 row_gap = 0
-# $activity is reported by files/scripts/herdr-tab-names.mjs from the title Copilot sets.
+# state_text, drawn in the color of state_icon, shows the labels that files/scripts/herdr-tab-names.mjs
+# reports for Copilot from the title it sets. They start with "›"; herdr's own words for other agents, and
+# for Copilot before the first report or in the unknown state, are hidden.
 rows = [
 	["state_icon", "workspace", "machine"],
 	[{ token = "tab", bold = true }],
-	[{ token = "$activity", rules = [{ contains = "Waiting for", bold = true }] }],
+	[{ token = "state_text", rules = [{ contains = "Waiting for", bold = true }, { starts_with = "›" }, { contains = "", hide = true }] }],
 ]
 
 [ui.toast]

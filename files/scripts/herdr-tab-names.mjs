@@ -37,20 +37,21 @@ export function parseCopilotTitle(title, sessionToken) {
 }
 
 // The status shown under the tab in the sidebar, as a subtitle of the session name.
+// herdr picks the label of its current state and draws it in the color of that state.
 // Waiting for background work comes from the title and wins in any state, because
 // herdr shows such a session as done. An intent outlives its turn in the title, so
 // it is shown only while the agent works; otherwise herdr's state is put into words.
-export function copilotActivity(pane) {
-    if (pane.agent !== 'copilot') return '';
+// The unknown state gets no label, and the sidebar hides herdr's own word for it.
+export function copilotStateLabels(pane) {
+    if (pane.agent !== 'copilot') return null;
     const parsed = parseCopilotTitle(pane.terminal_title_stripped ?? pane.terminal_title ?? '',
         pane.tokens?.copilot_session);
     const status = parsed?.status ?? '';
-    let activity;
-    if (COPILOT_STATUS.test(status)) activity = status;
-    else if (pane.agent_status === 'working') activity = status || 'Working…';
-    else activity = { blocked: 'Waiting for input', done: 'Done', idle: 'Idle' }[pane.agent_status];
+    const labels = COPILOT_STATUS.test(status)
+        ? { working: status, blocked: status, done: status, idle: status, unknown: status }
+        : { working: status || 'Working…', blocked: 'Waiting for input', done: 'Done', idle: 'Idle' };
     // The mark sets the status apart from the session name on the row above.
-    return activity ? `› ${activity}` : '';
+    return Object.fromEntries(Object.entries(labels).map(([state, label]) => [state, `› ${label}`]));
 }
 
 export function commandLabel(info, title = '', sessionToken = undefined) {
@@ -77,13 +78,17 @@ export function commandLabel(info, title = '', sessionToken = undefined) {
         .replace(/^-+/, '').replace(/[\x00-\x1f\x7f]/g, '').trim()).slice(0, 60).join('') || null;
 }
 
-export async function updateActivity(request) {
+export async function updateStateLabels(request) {
     const { snapshot } = await request('session.snapshot');
     for (const pane of snapshot.panes ?? []) {
-        const activity = copilotActivity(pane);
-        if ((pane.tokens?.activity ?? '') === activity) continue;
+        const labels = copilotStateLabels(pane);
+        if (!labels) continue;
+        const current = pane.state_labels ?? {};
+        if (Object.entries(labels).every(([state, label]) => current[state] === label)) continue;
+        // The agent guard hides the labels once another program takes over the pane.
+        // A report without clear_state_labels replaces every label of this source.
         await request('pane.report_metadata', {
-            pane_id: pane.pane_id, source: 'herdr-tab-names', tokens: { activity },
+            pane_id: pane.pane_id, source: 'herdr-tab-names', agent: 'copilot', state_labels: labels,
         });
     }
 }
@@ -255,7 +260,7 @@ async function watchSession(socketPath, managed, save) {
         running = true;
         try {
             await updateTabNames(request, managed);
-            await updateActivity(request);
+            await updateStateLabels(request);
             save();
             failures = 0;
         } catch (error) {
