@@ -162,8 +162,8 @@ row_gap = 0
 # for Copilot before the first report or in the unknown state, are hidden.
 rows = [
 	["state_icon", "workspace", "machine"],
-	[{ token = "tab", bold = true }],
-	[{ token = "state_text", rules = [{ contains = "Waiting for", bold = true }, { starts_with = "›" }, { contains = "", hide = true }] }],
+	[{ token = "tab", fg = "#f8f8f2", bold = true }],
+	[{ token = "state_text", rules = [{ starts_with = "›" }, { contains = "", hide = true }] }],
 ]
 
 [ui.toast]
