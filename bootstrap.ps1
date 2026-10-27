@@ -33,6 +33,15 @@ function Invoke-DotfilesBootstrap {
         throw 'winget was not found. Install or update App Installer from Microsoft Store, then run this script again.'
     }
 
+    # A new Windows ships a stub App Installer whose winget configure fails with 0x8A150069
+    # (APPINSTALLER_CLI_ERROR_PACKAGE_IS_STUB). --enable updates it to the full package from Microsoft Store,
+    # and only reports that the features are enabled when they already are. It rejects --disable-interactivity.
+    Write-Host 'Enabling winget configure'
+    winget.exe configure --enable
+    if ($LASTEXITCODE -ne 0) {
+        throw "winget configure --enable failed with exit code $LASTEXITCODE. It needs access to Microsoft Store; update App Installer from Microsoft Store, then run this script again."
+    }
+
     $configuration = if ($ScriptRoot) { Join-Path $ScriptRoot '.config\configuration.winget' }
     if (-not ($configuration -and (Test-Path -LiteralPath $configuration))) {
         $configuration = Join-Path $env:TEMP 'dotfiles-configuration.winget'
