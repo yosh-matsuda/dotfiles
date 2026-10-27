@@ -42,8 +42,8 @@ On Windows, run [bootstrap.ps1](bootstrap.ps1) from a normal PowerShell:
 1.  `winget configure --enable` updates App Installer from Microsoft Store when it is the stub that a new Windows ships, whose `winget configure` fails with `Extended features are not enabled` and exit code `-1978335127` (`0x8A150069`). On a full App Installer it only reports that the features are enabled.
 2.  `winget configure` applies [.config/configuration.winget](.config/configuration.winget). winget asks for elevation once for the resources marked `securityContext: elevated`.
 3.  `wsl --install Ubuntu-26.04 --no-launch` installs the distribution unless it is registered. When Virtual Machine Platform was just enabled, this fails until Windows restarts; restart and run the script again.
-4.  When the distribution has no default user yet, its shell opens once: create the user, then run `exit`. The distribution creates the user only in its first interactive shell.
-5.  `bootstrap.sh` runs in the distribution.
+4.  When the distribution has no default user yet, its shell opens once: enter a user name and a password at the prompts of Ubuntu, then run `exit` at the shell prompt. The distribution creates the user only in its first interactive shell. The script continues in the same window; closing it or pressing `Ctrl+C` stops the script, and running the one-liner again skips the user that already exists.
+5.  `bootstrap.sh` runs in the distribution. It asks for the Linux password twice: for `sudo` before `apt-get`, and at `BECOME password:` of the playbook.
 
 Pick another distribution or branch with `& ([scriptblock]::Create((irm <URL>))) -Distro Ubuntu-24.04 -Branch <branch>`.
 
