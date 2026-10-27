@@ -2,9 +2,11 @@
 
 Ansible-based dotfiles for my local development environment.
 
-This repository applies shell settings, XDG config files, and CLI tools on Ubuntu, WSL, and macOS. It is meant to be re-run to keep the machine state consistent.
+This repository applies shell settings, XDG config files, and CLI tools on Ubuntu, WSL, and macOS with Ansible, and sets up the Windows side of WSL with `winget configure`. It is meant to be re-run to keep the machine state consistent.
 
 ## What it sets up
+
+On Ubuntu, WSL, and macOS, with the Ansible playbook:
 
 -   dotfiles in the home directory
 -   XDG config files
@@ -14,25 +16,18 @@ This repository applies shell settings, XDG config files, and CLI tools on Ubunt
 -   herdr and automatic startup in interactive SSH terminals
 -   Pairfob for phone access to herdr on Ubuntu
 -   fish and fisher
--   WezTerm and VS Code on the Windows side of WSL
--   Windows applications, WSL, and fonts on a new Windows machine, through `winget configure`
+-   Copilot CLI settings, extensions, hooks, and personas
 
-## Requirements
+On Windows:
 
--   Python 3
--   Ansible
--   sudo access
--   Git
+-   Windows applications, WSL, fonts, and key remapping, with `winget configure`
+-   WezTerm and VS Code settings, copied from WSL by the `windows` role
 
-Install the required Ansible collection before the first run:
+## Getting started
 
-```bash
-$ ansible-galaxy collection install -r collections/requirements.yml
-```
+### Bootstrap a new machine
 
-## Bootstrap
-
-[bootstrap.sh](bootstrap.sh) does the steps of [Requirements](#requirements) and [Usage](#usage) on a new machine: it installs Git and Ansible with apt on Ubuntu, or Ansible with Homebrew on macOS, clones this repository into `~/dotfiles`, creates `local.hosts.yml` from the example when it is missing, installs the collection, and runs the playbook. `local.vars.yml` is optional and is left to you. Each step is skipped when it is already done.
+[bootstrap.sh](bootstrap.sh) does the steps of [Manual setup](#manual-setup) on a new machine: it installs Git and Ansible with apt on Ubuntu, or Ansible with Homebrew on macOS, clones this repository into `~/dotfiles`, creates `local.hosts.yml` from the example when it is missing, installs the collection, and runs the playbook. `local.vars.yml` is optional and is left to you. Each step is skipped when it is already done.
 
 ```bash
 $ bash -c "$(curl -fsSL https://raw.githubusercontent.com/yosh-matsuda/dotfiles/main/bootstrap.sh)"
@@ -51,20 +46,18 @@ On Windows, run [bootstrap.ps1](bootstrap.ps1) from a normal PowerShell:
 
 Pick another distribution or branch with `& ([scriptblock]::Create((irm <URL>))) -Distro Ubuntu-24.04 -Branch <branch>`.
 
-[.config/configuration.winget](.config/configuration.winget) declares Virtual Machine Platform, WSL, Git, VS Code, PowerShell 7, Coreutils for Windows, uv, the Visual C++ runtimes, the WezTerm nightly build, the UDEV Gothic NF fonts that [wezterm.lua](files/windows/wezterm/wezterm.lua) uses, and the key remapping in [Keyboard](#keyboard). Check the machine against it without changing anything:
+### Manual setup
 
-```powershell
-> winget configure test -f .config\configuration.winget
+-   Python 3
+-   Ansible
+-   sudo access
+-   Git
+
+Install the required Ansible collection before the first run:
+
+```bash
+$ ansible-galaxy collection install -r collections/requirements.yml
 ```
-
--   Packages with `useLatest: true` are upgraded to the latest version whenever the configuration is applied, so rerunning `bootstrap.ps1` or `winget configure` works like `winget upgrade` for them, and `winget configure test` reports an outdated package. WSL is left out, because upgrading it restarts the WSL service and stops the running distributions; update it with `wsl --update`. VS Code is left out, because it updates itself.
--   WezTerm and the fonts are installed by `Microsoft.DSC.Transitional/WindowsPowerShellScript` resources. The winget package `wez.wezterm.nightly` pins the SHA256 of an installer that the `nightly` tag replaces, so its install fails on a hash mismatch, and `wez.wezterm` is the 20240203 release. No winget package provides UDEV Gothic.
--   The WezTerm test passes for any installed WezTerm, so a rerun never updates it. Run the nightly installer again to update.
--   The same file serves x64 and Arm64 machines. On Arm64, winget picks the Arm64 installer of each package and falls back to x64 under emulation. WezTerm ships only an x64 build and runs emulated; the x64 Visual C++ runtime it needs installs on Arm64 too and carries the Arm64 binaries as well. uv for Arm64 depends on `Microsoft.VCRedist.2015+.arm64`, a separate package, so the elevated `VCRedistArm64` unit installs it before uv, which would otherwise raise a second elevation prompt. winget configure has no condition on a unit, so `VCRedistArm64` is a script that reports the desired state on other architectures and runs the `Microsoft.WinGet/Package` resource through `dsc.exe` on Arm64. Ubuntu, the Homebrew packages, Docker, and Pairfob all provide Arm64 builds for the playbook in WSL.
--   uv runs natively on Arm64 and, since uv 0.13.0, prefers native Arm64 Python. Wheels follow the architecture of the interpreter, and many packages publish `win_amd64` wheels without `win_arm64` ones, such as `torch`, `pyarrow`, and `grpcio` on 2026-10-26. To use x86_64 Python, which runs emulated, set `UV_PYTHON_ARCH=x86_64` yourself, or request it per environment: `uv venv --python cpython-3.14-windows-x86_64`.
--   winget 1.29 `winget configure validate` warns that no module is specified and that the units are not public, and exits with 1, for this file and for the files that `winget configure export` writes alike. `winget configure test` and `winget configure` are not affected.
-
-## Usage
 
 Copy the local example files and edit them for your environment. Both are Git-ignored; put local inventory entries and private variables only there.
 
@@ -89,7 +82,58 @@ Syntax check:
 $ ansible-playbook site.yml --syntax-check
 ```
 
-## Things to know
+## Windows
+
+The Windows side comes from two places. [.config/configuration.winget](.config/configuration.winget) declares applications, Windows features, and key remapping, and `winget configure` applies it, from `bootstrap.ps1` or by hand. The `windows` role of the playbook copies application settings from WSL into the Windows user profile.
+
+### Applications and features
+
+[.config/configuration.winget](.config/configuration.winget) declares Virtual Machine Platform, WSL, Git, VS Code, PowerShell 7, Coreutils for Windows, uv, the Visual C++ runtimes, the WezTerm nightly build, the UDEV Gothic NF fonts that [wezterm.lua](files/windows/wezterm/wezterm.lua) uses, and the key remapping in [Keyboard](#keyboard). Check the machine against it without changing anything:
+
+```powershell
+> winget configure test -f .config\configuration.winget
+```
+
+-   Packages with `useLatest: true` are upgraded to the latest version whenever the configuration is applied, so rerunning `bootstrap.ps1` or `winget configure` works like `winget upgrade` for them, and `winget configure test` reports an outdated package. WSL is left out, because upgrading it restarts the WSL service and stops the running distributions; update it with `wsl --update`. VS Code is left out, because it updates itself.
+-   WezTerm and the fonts are installed by `Microsoft.DSC.Transitional/WindowsPowerShellScript` resources. The winget package `wez.wezterm.nightly` pins the SHA256 of an installer that the `nightly` tag replaces, so its install fails on a hash mismatch, and `wez.wezterm` is the 20240203 release. No winget package provides UDEV Gothic.
+-   The WezTerm test passes for any installed WezTerm, so a rerun never updates it. Run the nightly installer again to update.
+-   winget 1.29 `winget configure validate` warns that no module is specified and that the units are not public, and exits with 1, for this file and for the files that `winget configure export` writes alike. `winget configure test` and `winget configure` are not affected.
+
+### Arm64
+
+-   The same file serves x64 and Arm64 machines. On Arm64, winget picks the Arm64 installer of each package and falls back to x64 under emulation. WezTerm ships only an x64 build and runs emulated; the x64 Visual C++ runtime it needs installs on Arm64 too and carries the Arm64 binaries as well. uv for Arm64 depends on `Microsoft.VCRedist.2015+.arm64`, a separate package, so the elevated `VCRedistArm64` unit installs it before uv, which would otherwise raise a second elevation prompt. winget configure has no condition on a unit, so `VCRedistArm64` is a script that reports the desired state on other architectures and runs the `Microsoft.WinGet/Package` resource through `dsc.exe` on Arm64. Ubuntu, the Homebrew packages, Docker, and Pairfob all provide Arm64 builds for the playbook in WSL.
+-   uv runs natively on Arm64 and, since uv 0.13.0, prefers native Arm64 Python. Wheels follow the architecture of the interpreter, and many packages publish `win_amd64` wheels without `win_arm64` ones, such as `torch`, `pyarrow`, and `grpcio` on 2026-10-26. To use x86_64 Python, which runs emulated, set `UV_PYTHON_ARCH=x86_64` yourself, or request it per environment: `uv venv --python cpython-3.14-windows-x86_64`.
+
+### Keyboard
+
+[.config/configuration.winget](.config/configuration.winget) remaps keys on Windows, for the Japanese (JIS) layout:
+
+| Keys | Result | Unit |
+| --- | --- | --- |
+| Left `Ctrl`, `CapsLock` (英数) | swapped | `ScancodeMap` |
+| `半角/全角`, `変換` | swapped | `ScancodeMap` |
+| `無変換` + `i` `j` `k` `l` | `↑` `←` `↓` `→` | kanata |
+| `無変換` + `u` `o` | `PageUp` `PageDown` | kanata |
+| `無変換` + `a` `;` | `Home` `End` | kanata |
+| `無変換` + `h` `d` | `Backspace` `Delete` | kanata |
+| `無変換` + `Space` | `Enter` | kanata |
+
+-   The swaps are one key to one key, so the registry value `Scancode Map` holds them. The keyboard driver rewrites the scancodes before any application sees them, so they hold in elevated windows, at sign-in, and without kanata. Windows reads the value at startup: restart after it changes. The unit replaces the whole value, including entries written by other tools.
+-   A `無変換` layer needs a resident program. [kanata](https://github.com/jtroo/kanata) is a key remapper that runs natively on x64 and Arm64. Its winIOv2 build identifies keys by scancode, so `;` is the physical key right of `l` on JIS as well. `無変換` sends nothing by itself: a tap that sends `無変換` would have to tell a tap from a hold by timing, which misfires when typing fast. Keys outside `defsrc` never pass through kanata.
+-   kanata runs elevated, or its layer would not reach elevated windows, so its executable and config live where only administrators can change them. `KanataPackage` installs `jtroo.kanata_gui` in machine scope under `%ProgramFiles%\WinGet\Packages`. winget leaves the extracted files writable by the installing user, which would let an unelevated process replace what runs elevated, so the unit resets their owner to Administrators and their ACLs to those inherited from Program Files, and its test fails while any account other than SYSTEM, Administrators, and TrustedInstaller can write to them. `KanataConfig` writes the config inline in the configuration file to `%ProgramFiles%\dotfiles\kanata.kbd`, and `KanataTask` registers the scheduled task `\dotfiles\kanata` that starts it with the highest privileges at sign-in, without a UAC prompt. The task runs at normal priority with no time limit, unlike the defaults of below normal and 72 hours. Its trigger repeats every minute while you are signed in, and a repetition is skipped while kanata runs, so kanata comes back within a minute after it exits for any reason, a crash or the emergency exit alike. The repetition comes from a time trigger in the past: the restart-on-failure setting of a task does not react to a process that exits, and the repetition of a logon trigger starts only at the next sign-in, not when the configuration registers and starts the task. A test task whose process exited with code 1 was never restarted by the former, and kanata stayed stopped with the latter. Rerunning the configuration restarts kanata when it is not running or started before the config was written.
+-   To change the layer, edit the `content` of `KanataConfig` and apply the configuration. Validate a config without hooking the keyboard with the console build in the kanata release: `kanata_windows_tty_winIOv2_x64.exe --cfg <file> --check`. Bump `revision` of `KanataTask` when its task definition changes.
+-   An upgrade of kanata stops it first, because a running kanata locks its executable. `winget upgrade --all` outside the configuration does not stop it and can fail on kanata while it runs.
+-   kanata does not reach the secure desktop, such as UAC prompts and the lock screen, where only the `Scancode Map` swaps apply. `LCtrl` + `Space` + `Esc` stops kanata in an emergency, and the task starts it again within a minute; with the swap, `LCtrl` is the key labeled `CapsLock`. To keep kanata stopped, run `Disable-ScheduledTask -TaskPath '\dotfiles\' -TaskName kanata` in an elevated PowerShell before stopping it; applying the configuration registers the task again, enabled.
+
+### Application settings
+
+On WSL, the `windows` role writes into the Windows user profile through `/mnt/c`. Windows applications cannot read WSL symlinks, so the files are copied, and changes must be made in this repository and applied by running the playbook.
+
+-   WezTerm: [files/windows/wezterm/wezterm.lua](files/windows/wezterm/wezterm.lua) is copied to `%USERPROFILE%\.config\wezterm\wezterm.lua` and replaces it entirely. Values that differ per machine go into a generated `machine.lua` next to it; the default domain is the WSL distribution that runs the playbook. Edits made directly on the Windows side are overwritten.
+-   WezTerm and GPU loss: when the OpenGL context is lost, for example when an external GPU is unplugged, WezTerm closes the GUI window but never recreates it, so the panes and their WSL shells keep running unseen. A herdr client left in such a process repeats every notification. Every 5 seconds the config checks for mux windows in the active workspace while no GUI window exists; after two hits in a row it starts a new `wezterm-gui.exe start --always-new-process` and exits, which also ends the old WSL shells. Rendering cannot simply be pinned to the integrated GPU: the per-app Windows graphics preference does not reach WGL here, the ANGLE path (`prefer_egl`) follows it but loses window transparency, and `front_end = 'Software'` still loads the system `opengl32.dll` because `wezterm-gui.exe` imports it statically.
+-   VS Code: only the keys in [files/windows/vscode](files/windows/vscode) are merged into `%APPDATA%\Code\User`; everything else stays with Settings Sync. When that directory does not exist, the merge is skipped with a message. Settings are overwritten key by key, and keybindings are appended when missing. The files are JSONC, so [files/scripts/vscode-settings-merge.mjs](files/scripts/vscode-settings-merge.mjs) edits them with `jsonc-parser`, the library VS Code itself uses, which keeps comments and formatting. The role installs it with `npm ci` into `files/scripts/node_modules` when it is missing.
+
+## Terminal
 
 ### herdr
 
@@ -114,6 +158,38 @@ $ ansible-playbook site.yml --syntax-check
 
 Pairing needs the phone, so it is left to a shell on the host: run `pairfob pair`, open `https://pairfob.com/pair` on the phone, and scan the code. The **Pairfob: Pair a device** action in herdr does the same. For a second host, open **Settings → Switch computer → Add a computer** on the phone. Turn notifications on per host under **Settings → Notifications**. `pairfob doctor` diagnoses a host without changing anything.
 
+### Tab names
+
+Interactive fish shells inside herdr name numbered tabs after the foreground command via [files/scripts/herdr-tab-names.mjs](files/scripts/herdr-tab-names.mjs). For Copilot CLI, the label is the session name; a session without a name is labeled `copilot`. Manually renamed tabs are left alone.
+
+Copilot CLI titles the terminal `<session name> - <status> - GitHub Copilot`, where the status is the intent the agent reports while it works, or `Waiting for background agents` or `Waiting for background shells` when a turn ends with background work still running. The Copilot status line reports the session name to the pane as the token `$copilot_session`, prefixed with `#` so that an unnamed session still reports a value, and the script uses it to split the title even when the name contains ` - `. Until that name arrives, or while the title still shows an older name, the tab keeps its label, because an intent alone reads the same as a session name; the tab name never takes the status. The status goes to the sidebar on the row under the tab, prefixed with `›` to set it apart from the session name above it. The script reports it as herdr's state labels, one for each state, and the row shows the `state_text` token, so herdr picks the label of the current state. Waiting for background work shows in any state; otherwise the intent shows while the agent works, or `Working…` before it reports one, because the title keeps the last intent after the turn, and the other herdr states read `Waiting for input`, `Done`, or `Idle`. The row hides herdr's own state words, which other agents and the unknown state show. The session name is bold and white, `#f8f8f2`, the text color of the Dracula theme that the config selects. The status is fainter: herdr colors take no alpha, so rules on the label text give each state the color of its state icon mixed 60% with the Dracula background, and waiting for background work takes the color of working, the state herdr gives it. herdr shows such a session only as working, so this row is what tells that it waits for background work.
+
+One worker per herdr server holds a lock, so a new fish shell does not replace a running worker. To pick up updates, kill the PID in `~/.local/state/herdr-tab-names/*/worker.pid` and open a new fish shell inside herdr.
+
+### Notifications
+
+herdr delivers agent notifications through the outer terminal (`[ui.toast] delivery = "terminal"`), for both finished and needs-attention events.
+
+Detection depends on `TERM_PROGRAM`, which SSH does not forward. The login profile mirrors it into `LC_TERM_PROGRAM` and restores it on the far side. WezTerm adds `TERM_PROGRAM` to `WSLENV` itself when it starts a WSL domain, so no Windows environment variable is needed.
+
+`TERM_PROGRAM` is intentionally absent inside panes; only the attached client matters. Verify with `herdr notification show test`.
+
+herdr keeps one agent state per pane and infers it from the visible screen, so the background sessions of a Copilot process never notify. `files/copilot/hooks/session-notify.sh` closes that gap: it runs on `Stop` and pushes its own toast through the socket API. Its text is `<directory>: <last reply>`, read from the transcript the hook is handed, instead of the generic `copilot finished: <workspace>` that herdr emits, so the visible session can produce two toasts for one event.
+
+`Notification` is deliberately not registered. It stays silent in `-p` mode but fires interactively for background shell completions, so it announces every `Run command` that finishes. `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `Stop`, `SubagentStop` and `SessionEnd` also fire; `Stop` is raised once per turn, not once per tool call.
+
+Subagents raise `Stop` too, which would notify in the middle of a turn. They report their parent's `transcript_path` under their own `session_id`, and the hook drops the event on that mismatch.
+
+Copilot flushes the transcript after the hook has started, so the reply that just ended the turn is often missing or half written. Reading it straight away yields the previous message and the toast looks like it fired mid-turn; the hook therefore retries for two seconds until a reply newer than the `Stop` timestamp appears.
+
+`[ui.toast] delivery` must stay `terminal`. `off` also drops `notification.show` on the client side, which would silence the hook as well.
+
+herdr raises its own `copilot finished` toast from screen detection, which duplicates the hook whenever the outer terminal is unfocused. There is no per-event switch, so `delay_seconds` is parked at its maximum instead: state toasts wait an hour and are replaced as soon as the pane changes state, while `notification.show` from the hook ignores the delay entirely. A session left untouched for a full hour can still produce one late toast.
+
+Copilot CLI can raise OS notifications itself (`notifications`, off by default). Leave it off; herdr and the hook already cover it.
+
+References: [configuration](https://herdr.dev/docs/configuration/), [session state](https://herdr.dev/docs/session-state/), [integrations](https://herdr.dev/docs/integrations/).
+
 ### Copy and paste
 
 One set of gestures holds in the VS Code integrated terminal and in WezTerm + herdr, for fish and for Copilot CLI alike:
@@ -131,55 +207,14 @@ One set of gestures holds in the VS Code integrated terminal and in WezTerm + he
 
 Drag-to-copy is the only copy gesture that every layer can share. herdr can copy a kept selection only on `Ctrl+C` (or `Cmd+C`), so [files/herdr/config.toml](files/herdr/config.toml) pins `copy_on_select = true`; with `false`, herdr would take `Ctrl+C` as copy while a selection exists. Copilot gets `"copyOnSelect": true` for the same reason. Pressing `Esc` twice within half a second stops a Copilot turn regardless of the highlight; the first press only shows a hint. A click outside the highlight clears it.
 
-The outer terminals run on Windows and are configured as described in [Windows applications](#windows-applications):
+The outer terminals run on Windows and are configured as described in [Application settings](#application-settings):
 
 -   VS Code: `"terminal.integrated.copyOnSelection": true`, and the Windows default `Ctrl+C` copy is removed in `keybindings.json`. The Windows default `terminal.integrated.rightClickBehavior` is already `copyPaste`.
 -   WezTerm: copies on every left-button release, including double-click, triple-click and `Alt` block selection, and trims the trailing spaces that block selection pads each line with. Right-click copies and clears the selection or pastes, and link opening moves to `Ctrl`+click with the `Ctrl` press bound to nothing so it does not reach the application. `Ctrl+V` pastes, and `Ctrl+C` and `Alt` keys reach the application, which means the default `Alt+Enter` full-screen toggle is disabled. `Ctrl+Shift+C` copies only a non-empty selection; the default `CopyTo` has no such check and can overwrite what herdr copied with an empty string.
 
-### Windows applications
+## Copilot CLI
 
-On WSL, the `windows` role writes into the Windows user profile through `/mnt/c`. Windows applications cannot read WSL symlinks, so the files are copied, and changes must be made in this repository and applied by running the playbook.
-
--   WezTerm: [files/windows/wezterm/wezterm.lua](files/windows/wezterm/wezterm.lua) is copied to `%USERPROFILE%\.config\wezterm\wezterm.lua` and replaces it entirely. Values that differ per machine go into a generated `machine.lua` next to it; the default domain is the WSL distribution that runs the playbook. Edits made directly on the Windows side are overwritten.
--   WezTerm and GPU loss: when the OpenGL context is lost, for example when an external GPU is unplugged, WezTerm closes the GUI window but never recreates it, so the panes and their WSL shells keep running unseen. A herdr client left in such a process repeats every notification. Every 5 seconds the config checks for mux windows in the active workspace while no GUI window exists; after two hits in a row it starts a new `wezterm-gui.exe start --always-new-process` and exits, which also ends the old WSL shells. Rendering cannot simply be pinned to the integrated GPU: the per-app Windows graphics preference does not reach WGL here, the ANGLE path (`prefer_egl`) follows it but loses window transparency, and `front_end = 'Software'` still loads the system `opengl32.dll` because `wezterm-gui.exe` imports it statically.
--   VS Code: only the keys in [files/windows/vscode](files/windows/vscode) are merged into `%APPDATA%\Code\User`; everything else stays with Settings Sync. When that directory does not exist, the merge is skipped with a message. Settings are overwritten key by key, and keybindings are appended when missing. The files are JSONC, so [files/scripts/vscode-settings-merge.mjs](files/scripts/vscode-settings-merge.mjs) edits them with `jsonc-parser`, the library VS Code itself uses, which keeps comments and formatting. The role installs it with `npm ci` into `files/scripts/node_modules` when it is missing.
-
-### Keyboard
-
-[.config/configuration.winget](.config/configuration.winget) remaps keys on Windows, for the Japanese (JIS) layout:
-
-| Keys | Result | Unit |
-| --- | --- | --- |
-| Left `Ctrl`, `CapsLock` (英数) | swapped | `ScancodeMap` |
-| `半角/全角`, `変換` | swapped | `ScancodeMap` |
-| `無変換` + `i` `j` `k` `l` | `↑` `←` `↓` `→` | kanata |
-| `無変換` + `u` `o` | `PageUp` `PageDown` | kanata |
-| `無変換` + `a` `;` | `Home` `End` | kanata |
-| `無変換` + `h` `d` | `Backspace` `Delete` | kanata |
-| `無変換` + `Space` | `Enter` | kanata |
-
--   The swaps are one key to one key, so the registry value `Scancode Map` holds them. The keyboard driver rewrites the scancodes before any application sees them, so they hold in elevated windows, at sign-in, and without kanata. Windows reads the value at startup: restart after it changes. The unit replaces the whole value, including entries written by other tools.
--   A `無変換` layer needs a resident program. [kanata](https://github.com/jtroo/kanata) is a key remapper that runs natively on x64 and Arm64. Its winIOv2 build identifies keys by scancode, so `;` is the physical key right of `l` on JIS as well. `無変換` sends nothing by itself: a tap that sends `無変換` would have to tell a tap from a hold by timing, which misfires when typing fast. Keys outside `defsrc` never pass through kanata.
--   kanata runs elevated, or its layer would not reach elevated windows, so its executable and config live where only administrators can change them. `KanataPackage` installs `jtroo.kanata_gui` in machine scope under `%ProgramFiles%\WinGet\Packages`. winget leaves the extracted files writable by the installing user, which would let an unelevated process replace what runs elevated, so the unit resets their owner to Administrators and their ACLs to those inherited from Program Files, and its test fails while any account other than SYSTEM, Administrators, and TrustedInstaller can write to them. `KanataConfig` writes the config inline in the configuration file to `%ProgramFiles%\dotfiles\kanata.kbd`, and `KanataTask` registers the scheduled task `\dotfiles\kanata` that starts it with the highest privileges at sign-in, without a UAC prompt. The task runs at normal priority with no time limit, unlike the defaults of below normal and 72 hours. Its trigger repeats every minute while you are signed in, and a repetition is skipped while kanata runs, so kanata comes back within a minute after it exits for any reason, a crash or the emergency exit alike. The repetition comes from a time trigger in the past: the restart-on-failure setting of a task does not react to a process that exits, and the repetition of a logon trigger starts only at the next sign-in, not when the configuration registers and starts the task. A test task whose process exited with code 1 was never restarted by the former, and kanata stayed stopped with the latter. Rerunning the configuration restarts kanata when it is not running or started before the config was written.
--   To change the layer, edit the `content` of `KanataConfig` and apply the configuration. Validate a config without hooking the keyboard with the console build in the kanata release: `kanata_windows_tty_winIOv2_x64.exe --cfg <file> --check`. Bump `revision` of `KanataTask` when its task definition changes.
--   An upgrade of kanata stops it first, because a running kanata locks its executable. `winget upgrade --all` outside the configuration does not stop it and can fail on kanata while it runs.
--   kanata does not reach the secure desktop, such as UAC prompts and the lock screen, where only the `Scancode Map` swaps apply. `LCtrl` + `Space` + `Esc` stops kanata in an emergency, and the task starts it again within a minute; with the swap, `LCtrl` is the key labeled `CapsLock`. To keep kanata stopped, run `Disable-ScheduledTask -TaskPath '\dotfiles\' -TaskName kanata` in an elevated PowerShell before stopping it; applying the configuration registers the task again, enabled.
-
-### Tab names
-
-Interactive fish shells inside herdr name numbered tabs after the foreground command via [files/scripts/herdr-tab-names.mjs](files/scripts/herdr-tab-names.mjs). For Copilot CLI, the label is the session name; a session without a name is labeled `copilot`. Manually renamed tabs are left alone.
-
-Copilot CLI titles the terminal `<session name> - <status> - GitHub Copilot`, where the status is the intent the agent reports while it works, or `Waiting for background agents` or `Waiting for background shells` when a turn ends with background work still running. The Copilot status line reports the session name to the pane as the token `$copilot_session`, prefixed with `#` so that an unnamed session still reports a value, and the script uses it to split the title even when the name contains ` - `. Until that name arrives, or while the title still shows an older name, the tab keeps its label, because an intent alone reads the same as a session name; the tab name never takes the status. The status goes to the sidebar on the row under the tab, prefixed with `›` to set it apart from the session name above it. The script reports it as herdr's state labels, one for each state, and the row shows the `state_text` token, so herdr picks the label of the current state. Waiting for background work shows in any state; otherwise the intent shows while the agent works, or `Working…` before it reports one, because the title keeps the last intent after the turn, and the other herdr states read `Waiting for input`, `Done`, or `Idle`. The row hides herdr's own state words, which other agents and the unknown state show. The session name is bold and white, `#f8f8f2`, the text color of the Dracula theme that the config selects. The status is fainter: herdr colors take no alpha, so rules on the label text give each state the color of its state icon mixed 60% with the Dracula background, and waiting for background work takes the color of working, the state herdr gives it. herdr shows such a session only as working, so this row is what tells that it waits for background work.
-
-One worker per herdr server holds a lock, so a new fish shell does not replace a running worker. To pick up updates, kill the PID in `~/.local/state/herdr-tab-names/*/worker.pid` and open a new fish shell inside herdr.
-
-### Copilot session usage
-
-`statusLine.refreshInterval` reruns the Copilot status line [files/copilot/statusline.sh](files/copilot/statusline.sh) while a session is idle, and the status line starts with the time since Copilot last did work, such as `idle 12m`, because the script keeps that time per session in `$XDG_RUNTIME_DIR` and moves it only when the usage counters change. The tab bar shows the account's AI credits for the current billing cycle from [files/scripts/copilot-cycle-aic.py](files/scripts/copilot-cycle-aic.py), which calls GitHub's internal `/copilot_internal/user` API with Copilot CLI's token every five minutes. The count covers every Copilot surface and machine; the entry disappears when the token or the API is unavailable.
-
-herdr infers Copilot's state from the screen, so a session whose turn ended while background agents or shells still run looks done. [files/scripts/copilot-session-activity.py](files/scripts/copilot-session-activity.py) reads the session's `events.jsonl` incrementally and counts that background work; shells started with `detach` are services and are not counted. The status line shows the counts with the running tools, the plan or autopilot mode, and the number of compactions.
-
-### Copilot CLI settings
+### Settings
 
 `~/.copilot/settings.json` is merged, not symlinked, because Copilot CLI rewrites the file atomically. The merge is one way: keys tracked in `files/copilot/settings.json` are restored on every run, and local-only keys such as the `hooks` block are preserved. To keep a local change everywhere, copy it into `files/copilot/settings.json`.
 
@@ -190,6 +225,12 @@ $ python3 files/scripts/copilot-settings-drift.py
 ```
 
 `~/.copilot/hooks` is a symlink into this repository, so `herdr integration install copilot` writes into the working tree. Expect `files/copilot/hooks/herdr-agent-state.sh` to change when herdr updates.
+
+### Session usage
+
+`statusLine.refreshInterval` reruns the Copilot status line [files/copilot/statusline.sh](files/copilot/statusline.sh) while a session is idle, and the status line starts with the time since Copilot last did work, such as `idle 12m`, because the script keeps that time per session in `$XDG_RUNTIME_DIR` and moves it only when the usage counters change. The tab bar shows the account's AI credits for the current billing cycle from [files/scripts/copilot-cycle-aic.py](files/scripts/copilot-cycle-aic.py), which calls GitHub's internal `/copilot_internal/user` API with Copilot CLI's token every five minutes. The count covers every Copilot surface and machine; the entry disappears when the token or the API is unavailable.
+
+herdr infers Copilot's state from the screen, so a session whose turn ended while background agents or shells still run looks done. [files/scripts/copilot-session-activity.py](files/scripts/copilot-session-activity.py) reads the session's `events.jsonl` incrementally and counts that background work; shells started with `detach` are services and are not counted. The status line shows the counts with the running tools, the plan or autopilot mode, and the number of compactions.
 
 ### Forking into a herdr tab
 
@@ -251,27 +292,3 @@ $ copilot-as none --resume  # start once without a persona
 The playbook does not create the link, so a new machine starts without a persona until `copilot-soul` sets one.
 
 Check which files a session loads with `copilot instruction list` or `/instructions`; `/instructions` also turns a source off for the current session.
-
-### Notifications
-
-herdr delivers agent notifications through the outer terminal (`[ui.toast] delivery = "terminal"`), for both finished and needs-attention events.
-
-Detection depends on `TERM_PROGRAM`, which SSH does not forward. The login profile mirrors it into `LC_TERM_PROGRAM` and restores it on the far side. WezTerm adds `TERM_PROGRAM` to `WSLENV` itself when it starts a WSL domain, so no Windows environment variable is needed.
-
-`TERM_PROGRAM` is intentionally absent inside panes; only the attached client matters. Verify with `herdr notification show test`.
-
-herdr keeps one agent state per pane and infers it from the visible screen, so the background sessions of a Copilot process never notify. `files/copilot/hooks/session-notify.sh` closes that gap: it runs on `Stop` and pushes its own toast through the socket API. Its text is `<directory>: <last reply>`, read from the transcript the hook is handed, instead of the generic `copilot finished: <workspace>` that herdr emits, so the visible session can produce two toasts for one event.
-
-`Notification` is deliberately not registered. It stays silent in `-p` mode but fires interactively for background shell completions, so it announces every `Run command` that finishes. `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `Stop`, `SubagentStop` and `SessionEnd` also fire; `Stop` is raised once per turn, not once per tool call.
-
-Subagents raise `Stop` too, which would notify in the middle of a turn. They report their parent's `transcript_path` under their own `session_id`, and the hook drops the event on that mismatch.
-
-Copilot flushes the transcript after the hook has started, so the reply that just ended the turn is often missing or half written. Reading it straight away yields the previous message and the toast looks like it fired mid-turn; the hook therefore retries for two seconds until a reply newer than the `Stop` timestamp appears.
-
-`[ui.toast] delivery` must stay `terminal`. `off` also drops `notification.show` on the client side, which would silence the hook as well.
-
-herdr raises its own `copilot finished` toast from screen detection, which duplicates the hook whenever the outer terminal is unfocused. There is no per-event switch, so `delay_seconds` is parked at its maximum instead: state toasts wait an hour and are replaced as soon as the pane changes state, while `notification.show` from the hook ignores the delay entirely. A session left untouched for a full hour can still produce one late toast.
-
-Copilot CLI can raise OS notifications itself (`notifications`, off by default). Leave it off; herdr and the hook already cover it.
-
-References: [configuration](https://herdr.dev/docs/configuration/), [session state](https://herdr.dev/docs/session-state/), [integrations](https://herdr.dev/docs/integrations/).
