@@ -37,9 +37,9 @@ export function parseCopilotTitle(title, sessionToken) {
 }
 
 // The status shown under the tab in the sidebar, as a subtitle of the session name.
-// herdr picks the label of its current state and draws it in the color of that state.
+// herdr picks the label of its current state, and the config colors it by its text.
 // Waiting for background work comes from the title and wins in any state, because
-// herdr shows such a session as done. An intent outlives its turn in the title, so
+// herdr shows such a session only as working. An intent outlives its turn in the title, so
 // it is shown only while the agent works; otherwise herdr's state is put into words.
 // The unknown state gets no label, and the sidebar hides herdr's own word for it.
 export function copilotStateLabels(pane) {
