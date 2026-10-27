@@ -51,7 +51,7 @@ On Windows, run [bootstrap.ps1](bootstrap.ps1) from a normal PowerShell:
 
 Pick another distribution or branch with `& ([scriptblock]::Create((irm <URL>))) -Distro Ubuntu-24.04 -Branch <branch>`.
 
-[.config/configuration.winget](.config/configuration.winget) declares Virtual Machine Platform, WSL, Git, VS Code, PowerShell 7, Coreutils for Windows, uv, the Visual C++ runtimes, the WezTerm nightly build, and the UDEV Gothic NF fonts that [wezterm.lua](files/windows/wezterm/wezterm.lua) uses. Check the machine against it without changing anything:
+[.config/configuration.winget](.config/configuration.winget) declares Virtual Machine Platform, WSL, Git, VS Code, PowerShell 7, Coreutils for Windows, uv, the Visual C++ runtimes, the WezTerm nightly build, the UDEV Gothic NF fonts that [wezterm.lua](files/windows/wezterm/wezterm.lua) uses, and the key remapping in [Keyboard](#keyboard). Check the machine against it without changing anything:
 
 ```powershell
 > winget configure test -f .config\configuration.winget
@@ -143,6 +143,27 @@ On WSL, the `windows` role writes into the Windows user profile through `/mnt/c`
 -   WezTerm: [files/windows/wezterm/wezterm.lua](files/windows/wezterm/wezterm.lua) is copied to `%USERPROFILE%\.config\wezterm\wezterm.lua` and replaces it entirely. Values that differ per machine go into a generated `machine.lua` next to it; the default domain is the WSL distribution that runs the playbook. Edits made directly on the Windows side are overwritten.
 -   WezTerm and GPU loss: when the OpenGL context is lost, for example when an external GPU is unplugged, WezTerm closes the GUI window but never recreates it, so the panes and their WSL shells keep running unseen. A herdr client left in such a process repeats every notification. Every 5 seconds the config checks for mux windows in the active workspace while no GUI window exists; after two hits in a row it starts a new `wezterm-gui.exe start --always-new-process` and exits, which also ends the old WSL shells. Rendering cannot simply be pinned to the integrated GPU: the per-app Windows graphics preference does not reach WGL here, the ANGLE path (`prefer_egl`) follows it but loses window transparency, and `front_end = 'Software'` still loads the system `opengl32.dll` because `wezterm-gui.exe` imports it statically.
 -   VS Code: only the keys in [files/windows/vscode](files/windows/vscode) are merged into `%APPDATA%\Code\User`; everything else stays with Settings Sync. When that directory does not exist, the merge is skipped with a message. Settings are overwritten key by key, and keybindings are appended when missing. The files are JSONC, so [files/scripts/vscode-settings-merge.mjs](files/scripts/vscode-settings-merge.mjs) edits them with `jsonc-parser`, the library VS Code itself uses, which keeps comments and formatting. The role installs it with `npm ci` into `files/scripts/node_modules` when it is missing.
+
+### Keyboard
+
+[.config/configuration.winget](.config/configuration.winget) remaps keys on Windows, for the Japanese (JIS) layout:
+
+| Keys | Result | Unit |
+| --- | --- | --- |
+| Left `Ctrl`, `CapsLock` (英数) | swapped | `ScancodeMap` |
+| `半角/全角`, `変換` | swapped | `ScancodeMap` |
+| `無変換` + `i` `j` `k` `l` | `↑` `←` `↓` `→` | kanata |
+| `無変換` + `u` `o` | `PageUp` `PageDown` | kanata |
+| `無変換` + `a` `;` | `Home` `End` | kanata |
+| `無変換` + `h` `d` | `Backspace` `Delete` | kanata |
+| `無変換` + `Space` | `Enter` | kanata |
+
+-   The swaps are one key to one key, so the registry value `Scancode Map` holds them. The keyboard driver rewrites the scancodes before any application sees them, so they hold in elevated windows, at sign-in, and without kanata. Windows reads the value at startup: restart after it changes. The unit replaces the whole value, including entries written by other tools.
+-   A `無変換` layer needs a resident program. [kanata](https://github.com/jtroo/kanata) is a key remapper that runs natively on x64 and Arm64. Its winIOv2 build identifies keys by scancode, so `;` is the physical key right of `l` on JIS as well. `無変換` sends nothing by itself: a tap that sends `無変換` would have to tell a tap from a hold by timing, which misfires when typing fast. Keys outside `defsrc` never pass through kanata.
+-   kanata runs elevated, or its layer would not reach elevated windows, so its executable and config live where only administrators can change them. `KanataPackage` installs `jtroo.kanata_gui` in machine scope under `%ProgramFiles%\WinGet\Packages`. winget leaves the extracted files writable by the installing user, which would let an unelevated process replace what runs elevated, so the unit resets their owner to Administrators and their ACLs to those inherited from Program Files, and its test fails while any account other than SYSTEM, Administrators, and TrustedInstaller can write to them. `KanataConfig` writes the config inline in the configuration file to `%ProgramFiles%\dotfiles\kanata.kbd`, and `KanataTask` registers the scheduled task `\dotfiles\kanata` that starts it with the highest privileges at sign-in, without a UAC prompt. The task runs at normal priority with no time limit, unlike the defaults of below normal and 72 hours. Its trigger repeats every minute while you are signed in, and a repetition is skipped while kanata runs, so kanata comes back within a minute after it exits for any reason, a crash or the emergency exit alike. The repetition comes from a time trigger in the past: the restart-on-failure setting of a task does not react to a process that exits, and the repetition of a logon trigger starts only at the next sign-in, not when the configuration registers and starts the task. A test task whose process exited with code 1 was never restarted by the former, and kanata stayed stopped with the latter. Rerunning the configuration restarts kanata when it is not running or started before the config was written.
+-   To change the layer, edit the `content` of `KanataConfig` and apply the configuration. Validate a config without hooking the keyboard with the console build in the kanata release: `kanata_windows_tty_winIOv2_x64.exe --cfg <file> --check`. Bump `revision` of `KanataTask` when its task definition changes.
+-   An upgrade of kanata stops it first, because a running kanata locks its executable. `winget upgrade --all` outside the configuration does not stop it and can fail on kanata while it runs.
+-   kanata does not reach the secure desktop, such as UAC prompts and the lock screen, where only the `Scancode Map` swaps apply. `LCtrl` + `Space` + `Esc` stops kanata in an emergency, and the task starts it again within a minute; with the swap, `LCtrl` is the key labeled `CapsLock`. To keep kanata stopped, run `Disable-ScheduledTask -TaskPath '\dotfiles\' -TaskName kanata` in an elevated PowerShell before stopping it; applying the configuration registers the task again, enabled.
 
 ### Tab names
 
