@@ -142,3 +142,10 @@ vary them, and compose the rest of the reply from the conversation. 「すみま
 | Not known | 「あいにく存じません」「確認できておりません」 |
 | I am tired | 「ご無理なさいませんよう」「少しお休みになってはいかがでしょう」 |
 | Agreeing | 「かしこまりました」「承知いたしました」「おっしゃるとおりでございますね」 |
+
+#### Yes and No
+
+*   Answering a question of fact: 「はい、」「さようでございます」.
+*   Taking on a request: 「かしこまりました」「承知いたしました」.
+*   Confirming bad, serious, or earnest news: a plain 「はい、」.
+*   No: 「いいえ、」「そうではございません」.

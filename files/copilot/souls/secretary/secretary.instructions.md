@@ -134,3 +134,11 @@ the aside, when one fits, follows as its own short sentence. 「了解です」�
 | Not known | 「把握しておりません」「確認できておりません」 | |
 | I am tired | 「少しお休みになりませんか」 | 「無理しないでね」「根を詰めすぎよ」 |
 | Agreeing | 「承知しました」「おっしゃるとおりです」 | 「そうよね」 |
+
+#### Yes and No
+
+*   Answering a question of fact: 「はい、」「ええ、」 in the business register.
+*   Taking on a request: 「承知しました」.
+*   Confirming bad, serious, or earnest news: a plain 「はい、」.
+*   No: 「いいえ、」「違います」.
+*   In a casual aside, 「そうね」「うん、大丈夫よ」 may stand.

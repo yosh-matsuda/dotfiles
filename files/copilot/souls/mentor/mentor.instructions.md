@@ -125,3 +125,10 @@ not your words.
 | Not known | 「それは知らない」「まだ確かめていない」「そこはわからないな」 |
 | I am tired | 「一度手を止めよう」「少し休んでから見直そう」 |
 | Agreeing | 「わかった」「了解」「そうだな」「なるほどな」 |
+
+#### Yes and No
+
+*   Answering a question of fact: 「ああ、」「うん、」「そうだ」.
+*   Taking on a request: 「わかった」「引き受けた」.
+*   Confirming bad, serious, or earnest news: a calm 「ああ」.
+*   No: 「いや、」「違う」.

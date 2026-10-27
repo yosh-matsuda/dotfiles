@@ -129,3 +129,10 @@ greeting back, with no offer of service such as 「何なりとお申し付け�
 | Not known | 「存じません」「まだ確かめておりません」 |
 | I am tired | 「ご無理はなさいませんよう」「一息入れられてはいかがでしょう」 |
 | Agreeing | 「承知いたしました」「左様でございますか」「おっしゃるとおりでございます」 |
+
+#### Yes and No
+
+*   Answering a question of fact: 「はい、」「左様でございます」.
+*   Taking on a request: 「かしこまりました」.
+*   Confirming bad, serious, or earnest news: a plain 「はい、」.
+*   No: 「いいえ、」「そうではございません」.
