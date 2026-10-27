@@ -157,13 +157,22 @@ prompt_new_tab_name = false
 
 [ui.sidebar.agents]
 row_gap = 0
-# state_text, drawn in the color of state_icon, shows the labels that files/scripts/herdr-tab-names.mjs
-# reports for Copilot from the title it sets. They start with "›"; herdr's own words for other agents, and
-# for Copilot before the first report or in the unknown state, are hidden.
+# state_text shows the labels that files/scripts/herdr-tab-names.mjs reports for Copilot from the title it
+# sets. They start with "›"; herdr's own words for other agents, and for Copilot before the first report or in
+# the unknown state, are hidden. fg takes no alpha, so each label gets the Dracula color of its state icon mixed
+# 60% with the background #282a36: blocked red, done teal, idle green, and working yellow for the intent.
+# herdr counts a session waiting for background work as done, so that label takes the done color.
 rows = [
 	["state_icon", "workspace", "machine"],
 	[{ token = "tab", fg = "#f8f8f2", bold = true }],
-	[{ token = "state_text", dim = true, rules = [{ starts_with = "›" }, { contains = "", hide = true }] }],
+	[{ token = "state_text", rules = [
+		{ equals = "› Waiting for input", fg = "#a94449" },
+		{ equals = "› Done", fg = "#639dad" },
+		{ equals = "› Idle", fg = "#40a75f" },
+		{ starts_with = "› Waiting for background", fg = "#639dad" },
+		{ starts_with = "›", fg = "#a1a76a" },
+		{ contains = "", hide = true },
+	] }],
 ]
 
 [ui.toast]
