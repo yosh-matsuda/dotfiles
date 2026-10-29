@@ -26,6 +26,57 @@
     dotfiles_template_dest_dir: "{{ home_dir }}"
     dotfiles_template_hidden: true
 
+# dotfiles_env_files maps <dir> to <file> to variables, written to
+# ~/.config/<dir>/<file>.env. Each variable replaces the line that sets the same
+# name or is appended. Other lines and other files are kept, so values set by
+# hand on a host stay.
+- name: Ensure env file directories exist
+  ansible.builtin.file:
+    path: "{{ xdg_config_home }}/{{ item }}"
+    state: directory
+    mode: "0700"
+  loop: "{{ (dotfiles_env_files | default({})).keys() | list }}"
+
+- name: Set variables in env files
+  vars:
+    dotfiles_env_file_entries: >-
+      {%- set entries = [] -%}
+      {%- for dir, files in (dotfiles_env_files | default({})).items() -%}
+      {%- for file, variables in files.items() -%}
+      {%- for key, value in variables.items() -%}
+      {%- set _ = entries.append({'dir': dir, 'file': file, 'key': key, 'value': '' if value is none else value | string}) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ entries }}
+  no_log: true
+  ansible.builtin.lineinfile:
+    path: "{{ xdg_config_home }}/{{ item.dir }}/{{ item.file }}.env"
+    regexp: "^\\s*(export\\s+)?{{ item.key | regex_escape }}\\s*="
+    line: "{{ item.key }}={{ item.value }}"
+    create: true
+    mode: "0600"
+  loop: "{{ dotfiles_env_file_entries }}"
+  loop_control:
+    label: "{{ item.dir }}/{{ item.file }}.env {{ item.key }}"
+
+# fish reads the *.env files of the directories listed here. Directories are
+# only appended, like the variables above.
+- name: Ensure dotfiles config directory exists
+  when: dotfiles_env_files | default({}) | length > 0
+  ansible.builtin.file:
+    path: "{{ xdg_config_home }}/dotfiles"
+    state: directory
+    mode: "0700"
+
+- name: List env file directories for fish
+  ansible.builtin.lineinfile:
+    path: "{{ xdg_config_home }}/dotfiles/env_dirs"
+    line: "{{ item }}"
+    create: true
+    mode: "0600"
+  loop: "{{ (dotfiles_env_files | default({})).keys() | list }}"
+
 - name: Create symbolic links for XDG config entries
   ansible.builtin.include_tasks: symlink_entries.yml
   vars:
