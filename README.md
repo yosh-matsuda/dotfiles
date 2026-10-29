@@ -83,6 +83,23 @@ Syntax check:
 $ ansible-playbook site.yml --syntax-check
 ```
 
+### API tokens
+
+API tokens shared by several machines live in `local.vars.yml`, never in the repository. Copy that file to each machine by hand, for example with `scp`, and run the playbook there. `dotfiles_env_files` maps a directory under `~/.config` to file names, and each file name to variables; every variable becomes a `NAME=value` line of `~/.config/<dir>/<file>.env`:
+
+```yaml
+dotfiles_env_files:
+  dirname:          # ~/.config/dirname/
+    example:        # ~/.config/dirname/example.env
+      EXAMPLE_API_TOKEN: xxxxxxxx
+```
+
+-   The playbook replaces the line that sets the same name, with or without `export`, and appends the variable when no line sets it. Other lines, and `.env` files that `local.vars.yml` does not name, are kept, so a variable set by hand on one machine stays.
+-   A variable removed from `local.vars.yml` stays in the file; delete its line by hand.
+-   Each directory gets mode `0700` and each file the playbook writes gets `0600`.
+-   The playbook appends each directory to `~/.config/dotfiles/env_dirs`, one per line, relative to `~/.config`. A directory removed from `local.vars.yml` stays in the list; delete its line by hand. A directory added to the list by hand is read too.
+-   [env_files.fish](files/xdg_config/fish/conf.d/env_files.fish) exports every `NAME=value` line of `~/.config/<dir>/*.env` for each directory in that list when fish starts. It skips blank lines and `#` comments, accepts a leading `export`, and strips one pair of matching quotes around the value. Other shells do not read the files.
+
 ## Windows
 
 The Windows side comes from two places. [.config/configuration.winget](.config/configuration.winget) declares applications, Windows features, and key remapping, and `winget configure` applies it, from `bootstrap.ps1` or by hand. The `windows` role of the playbook copies application settings from WSL into the Windows user profile.
