@@ -18,12 +18,22 @@
         "bash": "command -v node >/dev/null 2>&1 && node \"$HOME/.copilot/hooks/reply-language.mjs\" stop || true",
         "timeoutSec": 10,
         "type": "command"
+      },
+      {
+        "bash": "[ -n \"$COPILOT_CUSTOM_INSTRUCTIONS_DIRS\" ] && command -v node >/dev/null 2>&1 && node \"$HOME/.copilot/hooks/persona-name.mjs\" stop || true",
+        "timeoutSec": 10,
+        "type": "command"
       }
     ],
     "preToolUse": [
       {
         "bash": "command -v node >/dev/null 2>&1 && node \"$HOME/.copilot/hooks/reply-language.mjs\" ask || true",
         "matcher": "ask_user",
+        "timeoutSec": 5,
+        "type": "command"
+      },
+      {
+        "bash": "[ -n \"$COPILOT_CUSTOM_INSTRUCTIONS_DIRS\" ] && command -v node >/dev/null 2>&1 && node \"$HOME/.copilot/hooks/persona-name.mjs\" tool || true",
         "timeoutSec": 5,
         "type": "command"
       }

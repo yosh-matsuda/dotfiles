@@ -312,3 +312,12 @@ $ copilot-as none --resume  # start once without a persona
 The playbook does not create the link, so a new machine starts without a persona until `copilot-soul` sets one.
 
 Check which files a session loads with `copilot instruction list` or `/instructions`; `/instructions` also turns a source off for the current session.
+
+#### Persona name
+
+The persona never opens a message with its own name, as in 「ずんだもん、〜するのだ」 or 「ずんだもんが〜するのだ」, where the name reads as the user calling the persona. The instruction alone is not enough: once a progress message breaks it, the model copies the form into every progress message that follows. [files/copilot/hooks/persona-name.mjs](files/copilot/hooks/persona-name.mjs) checks the start of each message for the name followed by 「、」「が」「は」.
+
+-   `preToolUse`, for every tool, reads the message that requested the tool and denies the call when the message opens with the name. The message is already on screen; the agent writes it again and calls the tool once more, and the denial in the context keeps the following messages from copying the form. The hook is handed no transcript path and no tool call id, so it reads `~/.copilot/session-state/<sessionId>/events.jsonl` and takes the last top-level message that still has a tool call without `tool.execution_complete`; the previous message, which the transcript may still hold when the hook starts, has none left.
+-   `agentStop` blocks the reply that ended the turn in the same case, once per turn, like [Reply language](#reply-language).
+
+The persona comes from the directory that `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` points at, so `copilot-as` works too; when it points at no persona, the hook exits without output. The names of each persona live in `SELF_NAMES` in the hook; add them there with a new persona.
