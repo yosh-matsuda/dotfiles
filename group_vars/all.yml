@@ -27,6 +27,9 @@ brew_packages:
 - node
 - fastfetch
 - uv
+# Casks marked auto_updates, such as copilot-cli, update themselves; the playbook only installs them
+brew_casks:
+- copilot-cli
 brew_binary_path: >-
   {{
     '/home/linuxbrew/.linuxbrew/bin/brew' if is_ubuntu
