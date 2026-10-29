@@ -117,6 +117,17 @@
   environment:
     HOME: "{{ brew_exec_home }}"
 
+- name: Install Homebrew casks
+  when: brew_binary_path is not none and brew_binary_stat.stat.exists
+  become: "{{ brew_exec_user != ansible_facts['user_id'] }}"
+  become_user: "{{ brew_exec_user if brew_exec_user != ansible_facts['user_id'] else omit }}"
+  community.general.homebrew_cask:
+    name: "{{ brew_casks }}"
+    path: "{{ brew_bin_dir }}"
+    state: present
+  environment:
+    HOME: "{{ brew_exec_home }}"
+
 - name: Remove linuxbrew Ansible temporary directory
   when:
   - is_ubuntu

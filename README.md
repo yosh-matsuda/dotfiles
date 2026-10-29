@@ -10,7 +10,7 @@ On Ubuntu, WSL, and macOS, with the Ansible playbook:
 
 -   dotfiles in the home directory
 -   XDG config files
--   Homebrew packages
+-   Homebrew packages and casks, including Copilot CLI
 -   pipx packages
 -   Docker on WSL
 -   herdr and automatic startup in interactive SSH terminals
@@ -233,6 +233,10 @@ The outer terminals run on Windows and are configured as described in [Applicati
 -   WezTerm: copies on every left-button release, including double-click, triple-click and `Alt` block selection, and trims the trailing spaces that block selection pads each line with. Right-click copies and clears the selection or pastes, and link opening moves to `Ctrl`+click with the `Ctrl` press bound to nothing so it does not reach the application. `Ctrl+V` pastes, and `Ctrl+C` and `Alt` keys reach the application, which means the default `Alt+Enter` full-screen toggle is disabled. `Ctrl+Shift+C` copies only a non-empty selection; the default `CopyTo` has no such check and can overwrite what herdr copied with an empty string.
 
 ## Copilot CLI
+
+### Installation
+
+The `brew` role installs Copilot CLI as the Homebrew cask `copilot-cli`. The playbook only installs it: Copilot CLI downloads newer versions into `~/.cache/copilot/pkg` and runs them on the next launch, so the version under the Caskroom stays old. The cask is marked `auto_updates`, which `brew upgrade` skips unless `--greedy` is given. fish puts `~/.local/bin` before Homebrew in `PATH`, so a copy from the install script in `~/.local/bin/copilot` keeps running there; delete it after moving a machine to Homebrew.
 
 ### Settings
 
