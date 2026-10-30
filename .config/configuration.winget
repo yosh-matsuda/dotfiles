@@ -253,8 +253,8 @@ resources:
         Remove-Item -LiteralPath $zip, $work -Recurse -Force -ErrorAction SilentlyContinue
       }
 
-# Swaps the left Ctrl and CapsLock (Eisu on JIS) keys, and the Hankaku/Zenkaku and Henkan keys, for every user.
-# The keyboard driver rewrites the scancodes, so the swaps hold in elevated windows and at sign-in without kanata.
+# Maps CapsLock (Eisu on JIS) to left Ctrl, and swaps the Hankaku/Zenkaku and Henkan keys, for every user.
+# The keyboard driver rewrites the scancodes, so the mappings hold in elevated windows and at sign-in without kanata.
 # Windows reads the value at startup, so a change takes effect after a restart.
 # Layout: version and flags, the entry count including the terminator, then one line per entry with the new
 # and the original scancode as little-endian 16-bit words: 0x1D left Ctrl, 0x3A CapsLock, 0x29 Hankaku/Zenkaku,
@@ -262,7 +262,7 @@ resources:
 - name: ScancodeMap
   type: Microsoft.Windows/Registry
   metadata:
-    description: Swap left Ctrl with CapsLock, and Hankaku/Zenkaku with Henkan
+    description: Map CapsLock to left Ctrl, and swap Hankaku/Zenkaku with Henkan
     winget:
       securityContext: elevated
   properties:
@@ -270,8 +270,7 @@ resources:
     valueName: Scancode Map
     valueData:
       Binary: [
-        0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0,
-        58, 0, 29, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0,
         29, 0, 58, 0,
         121, 0, 41, 0,
         41, 0, 121, 0,
@@ -378,7 +377,7 @@ resources:
   properties:
     input:
       path: dotfiles\kanata.kbd
-      # The Ctrl and CapsLock swap and the Henkan and Hankaku/Zenkaku swap are in ScancodeMap.
+      # The CapsLock-to-Ctrl mapping and the Henkan and Hankaku/Zenkaku swap are in ScancodeMap.
       # Muhenkan is only a layer key and sends nothing itself, so no tap timing can misfire.
       # Keys outside defsrc never pass through kanata. windows-sync-keystates none stops the check that compares
       # the keys with US virtual-key codes, which misreads ; on JIS; see KanataPackage.
@@ -390,21 +389,21 @@ resources:
         )
 
         (defsrc
-          mhnk
+          mhnk tab
           u i o
           a d h j k l ;
           spc
         )
 
         (deflayer base
-          (layer-while-held nav)
+          (layer-while-held nav) tab
           u i o
           a d h j k l ;
           spc
         )
 
         (deflayer nav
-          _
+          _ S-caps
           pgup up pgdn
           home del bspc left down right end
           ret
