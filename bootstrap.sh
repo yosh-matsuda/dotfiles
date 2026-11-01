@@ -53,4 +53,13 @@ if [ ! -e local.hosts.yml ]; then
     cp local.hosts.yml.example local.hosts.yml
 fi
 ansible-galaxy collection install -r collections/requirements.yml
-ansible-playbook site.yml --ask-become-pass
+# SSH hosts in local.hosts.yml are left to a manual run of the playbook.
+local_hosts=$(ansible-inventory --list | python3 -c '
+import json, sys
+hostvars = json.load(sys.stdin)["_meta"]["hostvars"]
+print(",".join(h for h, v in hostvars.items() if v.get("ansible_connection") == "local"))')
+if [ -z "$local_hosts" ]; then
+    echo "local.hosts.yml has no host with ansible_connection: local" >&2
+    exit 1
+fi
+ansible-playbook site.yml --ask-become-pass --limit "$local_hosts"

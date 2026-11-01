@@ -105,6 +105,14 @@
   environment:
     HOME: "{{ brew_exec_home }}"
   changed_when: false
+  # brew doctor exits with 1 on any warning, such as a deprecated formula that an installed one depends on.
+  failed_when: false
+  register: brew_doctor
+
+- name: Report Homebrew health warnings
+  when: brew_doctor.rc is defined and brew_doctor.rc != 0
+  ansible.builtin.debug:
+    msg: "{{ brew_doctor.stderr_lines }}"
 
 - name: Install Homebrew packages
   when: brew_binary_path is not none and brew_binary_stat.stat.exists
