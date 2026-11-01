@@ -27,7 +27,7 @@ On Windows:
 
 ### Bootstrap a new machine
 
-[bootstrap.sh](bootstrap.sh) does the steps of [Manual setup](#manual-setup) on a new machine: it installs Git and Ansible with apt on Ubuntu, or Ansible with Homebrew on macOS, clones this repository into `~/dotfiles`, creates `local.hosts.yml` from the example when it is missing, installs the collection, and runs the playbook. `local.vars.yml` is optional and is left to you. Each step is skipped when it is already done.
+[bootstrap.sh](bootstrap.sh) does the steps of [Manual setup](#manual-setup) on a new machine: it installs Git and Ansible with apt on Ubuntu, or Ansible with Homebrew on macOS, clones this repository into `~/dotfiles`, creates `local.hosts.yml` from the example when it is missing, installs the collection, and runs the playbook on the hosts of `local.hosts.yml` with `ansible_connection: local`. SSH hosts in `local.hosts.yml` are updated only by running the playbook by hand. `local.vars.yml` is optional and is left to you. Each step is skipped when it is already done.
 
 ```bash
 $ bash -c "$(curl -fsSL https://raw.githubusercontent.com/yosh-matsuda/dotfiles/main/bootstrap.sh)"
