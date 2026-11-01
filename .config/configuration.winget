@@ -90,6 +90,49 @@ resources:
     acceptAgreements: true
     useLatest: true
 
+# Ditto reads its hotkeys only at startup and writes them only from its options dialog.
+# The data is MAKEWORD(virtual key, HOTKEYF_* modifiers): 0x5D VK_APPS with 0x04 Alt. Ditto reads 0x08 as Win.
+- name: DittoHotKey
+  type: Microsoft.Windows/Registry
+  metadata:
+    description: Open Ditto with Alt + Menu
+  properties:
+    keyPath: HKCU\Software\Ditto
+    valueName: DittoHotKey
+    valueData:
+      DWord: 1117
+
+# The package has only an x64 installer, which runs emulated on Arm64. Its silent install starts Ditto from the
+# elevated installer, so that Ditto runs elevated until sign-out; DittoStartup starts it unelevated from then on.
+# It follows DittoHotKey so that the Ditto the installer starts reads the hotkey.
+- name: Ditto
+  type: Microsoft.WinGet/Package
+  metadata:
+    description: Install the Ditto clipboard manager
+    winget:
+      securityContext: elevated
+  dependsOn:
+  - DittoHotKey
+  properties:
+    id: Ditto.Ditto
+    source: winget
+    acceptAgreements: true
+    useLatest: true
+
+# The installer writes this value only into the hive of the user that elevates, and a reinstall keeps an earlier
+# choice to leave it out. The data matches what the Run on Windows startup option of Ditto writes.
+- name: DittoStartup
+  type: Microsoft.Windows/Registry
+  metadata:
+    description: Start Ditto at sign-in for the current user
+  dependsOn:
+  - Ditto
+  properties:
+    keyPath: HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+    valueName: Ditto
+    valueData:
+      String: C:\Program Files\Ditto\Ditto.exe
+
 # A portable package for the current user; the Visual C++ runtime it depends on needs elevation,
 # so the elevated VCRedist units install it first.
 - name: uv
