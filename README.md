@@ -106,7 +106,7 @@ The Windows side comes from two places. [.config/configuration.winget](.config/c
 
 ### Applications and features
 
-[.config/configuration.winget](.config/configuration.winget) declares Virtual Machine Platform, WSL, Git, VS Code, PowerShell 7, Coreutils for Windows, uv, the Visual C++ runtimes, the WezTerm nightly build, the UDEV Gothic NF fonts that [wezterm.lua](files/windows/wezterm/wezterm.lua) uses, and the key remapping in [Keyboard](#keyboard). Check the machine against it without changing anything:
+[.config/configuration.winget](.config/configuration.winget) declares Virtual Machine Platform, WSL, Git, VS Code, PowerShell 7, Coreutils for Windows, the Ditto clipboard manager, uv, the Visual C++ runtimes, the WezTerm nightly build, the UDEV Gothic NF fonts that [wezterm.lua](files/windows/wezterm/wezterm.lua) uses, and the key remapping in [Keyboard](#keyboard). Check the machine against it without changing anything:
 
 ```powershell
 > winget configure test -f .config\configuration.winget
@@ -116,6 +116,8 @@ The Windows side comes from two places. [.config/configuration.winget](.config/c
 -   Virtual Machine Platform is enabled by a script with `Enable-WindowsOptionalFeature`. winget installs DSC from Microsoft Store, and the `Microsoft.Windows/OptionalFeatureList` resource of that DSC stops with `This resource currently is not supported when installed via Appx`. `EnablePending` counts as enabled, because the feature takes effect after the restart that `bootstrap.ps1` asks for.
 -   WezTerm and the fonts are installed by `Microsoft.DSC.Transitional/WindowsPowerShellScript` resources. The winget package `wez.wezterm.nightly` pins the SHA256 of an installer that the `nightly` tag replaces, so its install fails on a hash mismatch, and `wez.wezterm` is the 20240203 release. No winget package provides UDEV Gothic.
 -   The WezTerm test passes for any installed WezTerm, so a rerun never updates it. Run the nightly installer again to update.
+-   Ditto starts at sign-in from the `Ditto` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, which the `DittoStartup` unit writes for the user that runs `winget configure`. Turning off `Run on Windows startup` in the Ditto options deletes the value, and the next apply writes it again. The silent install starts Ditto from the elevated installer, so the first Ditto runs elevated until sign-out.
+-   `Alt` + `Menu` opens Ditto. The `DittoHotKey` unit writes `DittoHotKey` under `HKCU\Software\Ditto`, and the next apply writes it again after a change in the Ditto options. Ditto reads it only at startup, so exit Ditto from the tray icon and start it again after the value changes.
 -   winget 1.29 `winget configure validate` warns that no module is specified and that the units are not public, and exits with 1, for this file and for the files that `winget configure export` writes alike. `winget configure test` and `winget configure` are not affected.
 
 ### Arm64
