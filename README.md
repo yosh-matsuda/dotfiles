@@ -198,6 +198,16 @@ One worker per herdr server holds a lock, so a new fish shell does not replace a
 -   herdr finds links in plain text only for `http(s)`, so a path that appears as plain text, such as a path in a code span, is not a link.
 -   The `dotfiles` role links the plugin on Ubuntu hosts that have the Homebrew herdr. Plugin commands run with the server's environment, so the action loads `~/.profile` itself, like the VS Code shortcut. Check the result of a click with `herdr plugin log list`.
 
+### Web links
+
+`Ctrl`+click on an `http(s)` link opens it in the default browser on Windows, where WezTerm runs. This works for a Markdown link that shows only its label, which `Shift+Ctrl`+click cannot open.
+
+-   herdr opens a clicked link with `xdg-open` on the host that runs its client, WSL or an SSH host, which has no browser of its own. The `dotfiles` role links [files/local_bin/xdg-open](files/local_bin/xdg-open) into `~/.local/bin`, which comes first on `PATH`. When `TERM_PROGRAM` is `WezTerm` and the argument is an `http(s)` URL, it writes the URL to `/dev/tty` as the user var `dotfiles_open_url`, and the `user-var-changed` handler in [files/windows/wezterm/wezterm.lua](files/windows/wezterm/wezterm.lua) opens it with `wezterm.open_with`. Otherwise it runs the next `xdg-open` on `PATH`.
+-   herdr starts `xdg-open` without a new session, so `/dev/tty` is the terminal of the herdr client and reaches WezTerm directly. herdr panes lack `TERM_PROGRAM` and herdr drops OSC 1337 from them, so a program in a pane, such as `gh browse`, still uses the system `xdg-open`.
+-   Any output that reaches WezTerm outside herdr, such as `cat` of a file in a plain SSH shell, can set the same user var and open an `http(s)` URL in the browser. The handler opens nothing else.
+-   herdr reports a failure to open a link only in `~/.config/herdr/herdr-client.log` (`failed to open pane URL`).
+-   WezTerm turns the mouse pointer into a hand only over a URL that it finds in the text on the screen. herdr does not pass the target of a labeled link to WezTerm, so the pointer stays an arrow over such a link, although `Ctrl`+click opens it.
+
 ### Notifications
 
 herdr delivers agent notifications through the outer terminal (`[ui.toast] delivery = "terminal"`), for both finished and needs-attention events.
@@ -232,7 +242,7 @@ One set of gestures holds in the VS Code integrated terminal and in WezTerm + he
 | Copy a word or a line | Double-click or triple-click; copied on release like a drag | herdr documents double-click only |
 | Paste | `Ctrl+V` | |
 | Copy or paste with the right button | Right-click copies and clears the selection if there is one, and pastes otherwise | Right after a drag the selection is still there, so it copies again; click once first or use `Ctrl+V`. In herdr, right-click opens the pane menu, and `Shift`+right-click pastes through the outer terminal |
-| Open a link | `Ctrl`+click | In herdr, `Ctrl`+click opens `http(s)` links in the browser of the host that runs the herdr client, and file links in VS Code (see [File links](#file-links)). `Shift+Ctrl`+click lets the outer terminal open a URL that is visible as text; since herdr 0.9.4, herdr no longer passes OSC 8 hyperlinks to the outer terminal while `ui.mouse_capture` is on, so a labeled link does not open this way. `code-remote` prints its `vscode://` URI as text for this reason |
+| Open a link | `Ctrl`+click | In herdr, `Ctrl`+click opens `http(s)` links in the Windows browser (see [Web links](#web-links)), and file links in VS Code (see [File links](#file-links)). `Shift+Ctrl`+click lets the outer terminal open a URL that is visible as text; since herdr 0.9.4, herdr no longer passes OSC 8 hyperlinks to the outer terminal while `ui.mouse_capture` is on, so a labeled link does not open this way. `code-remote` prints its `vscode://` URI as text for this reason |
 | Interrupt | `Ctrl+C`, which never copies; fish clears the line or interrupts the command, Copilot stops the turn | In Copilot, `Ctrl+C` copies again while a highlight remains, and cancels the `ask_user` question even with a selection; press `Esc` twice instead |
 | Select in the outer terminal | `Shift`+drag, which bypasses herdr and Copilot | In herdr the selection includes the sidebar and pane borders |
 | Block selection | `Alt`+drag | In herdr, `Shift+Alt`+drag |
