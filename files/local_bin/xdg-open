@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # herdr opens a clicked URL with xdg-open on the host that runs its client: WSL or an SSH host, never the Windows
-# desktop that runs WezTerm. Under WezTerm, hand an http(s) URL to WezTerm as the user var dotfiles_open_url instead;
-# wezterm.lua opens it with the Windows default browser. herdr panes lack TERM_PROGRAM, and herdr drops OSC 1337 from
+# desktop that runs WezTerm. Under WezTerm, hand an http(s) or vscode:// URL to WezTerm as the user var
+# dotfiles_open_url instead; wezterm.lua opens it on Windows. herdr panes lack TERM_PROGRAM, and herdr drops OSC 1337 from
 # them, so programs in a pane and any other case go to the next xdg-open on PATH.
 url=${1-}
-if [[ ${TERM_PROGRAM-} == WezTerm && $url =~ ^https?:// ]] && { : >/dev/tty; } 2>/dev/null; then
+# code-remote links its label to vscode.dev's redirect page so that herdr opens it on Ctrl+click; WezTerm gets the
+# vscode:// URI inside, so VS Code opens without a browser tab.
+if [[ $url =~ ^https://vscode\.dev/redirect\?url=(vscode%3A[^\&]*)$ ]]; then
+    decoded=$(printf '%b' "${BASH_REMATCH[1]//%/\\x}")
+    [[ $decoded == vscode://* ]] && url=$decoded
+fi
+if [[ ${TERM_PROGRAM-} == WezTerm && $url =~ ^(https?|vscode):// ]] && { : >/dev/tty; } 2>/dev/null; then
     # A timestamp keeps each value new, in case WezTerm skips setting a user var to the value it already holds.
     printf '\e]1337;SetUserVar=dotfiles_open_url=%s\a' "$(printf '%s %s' "$EPOCHREALTIME" "$url" | base64 -w 0)" >/dev/tty
     exit 0

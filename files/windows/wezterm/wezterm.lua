@@ -474,14 +474,14 @@ config.notification_handling = 'AlwaysShow'
 -- -----------------------------------------------------------------------------
 
 -- herdr は Ctrl+click した URL を、クライアントが動く WSL や SSH 先の xdg-open で開こうとする。
--- dotfiles の files/local_bin/xdg-open がそれを user var として送ってくるので、Windows の既定ブラウザで開く。
--- 値は「タイムスタンプ URL」の形で、http(s) 以外は開かない
+-- dotfiles の files/local_bin/xdg-open がそれを user var として送ってくるので、Windows で開く。
+-- 値は「タイムスタンプ URL」の形で、http(s) と、code-remote が出す vscode:// 以外は開かない
 wezterm.on('user-var-changed', function(_window, _pane, name, value)
   if name ~= 'dotfiles_open_url' then
     return
   end
-  local url = value:match('^%S+ (https?://%S+)$')
-  if url then
+  local url = value:match('^%S+ (%S+)$')
+  if url and (url:match('^https?://') or url:match('^vscode://')) then
     wezterm.open_with(url)
   end
 end)
