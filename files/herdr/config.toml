@@ -18,7 +18,7 @@ command = '"${HERDR_BIN_PATH:-herdr}" workspace create --cwd "$HOME" --focus'
 key = "prefix+shift+c"
 # Runs on the pane's own server, whose own config defines it, so code-remote.sh from the same checkout is there too:
 # WSL opens directly, SSH hosts reuse a connected VS Code window or show a code-remote link; herdr >= 0.9.4 keeps OSC 8
-# from the outer terminal under mouse capture, so Shift+Ctrl+click opens the bare URI it also prints.
+# from the outer terminal under mouse capture, so the printed URI opens with Ctrl+click or Shift+Ctrl+click.
 # Pane commands run through /bin/sh -c and ignore shell_mode, so the command loads ~/.profile itself for `code` and the remote CLI.
 type = "pane"
 command = '''exec bash -c '. "$HOME/.profile"; link=$("$HOME/dotfiles/files/herdr/code-remote/code-remote.sh") && [[ -n $link ]] && printf "%s\n" "$link" && read -rsn 1 -p "Press any key to close "''''
