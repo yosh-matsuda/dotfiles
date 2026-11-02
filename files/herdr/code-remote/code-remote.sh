@@ -103,11 +103,9 @@ code-remote() {
         fi
     fi
 
-    local host authority uri
-    host=${VSCODE_SSH_HOST:-$(hostname -s)}
-    authority=ssh-remote+$host
+    local authority uri
+    authority=ssh-remote+${VSCODE_SSH_HOST:-$(hostname -s)}
     if [[ -n $wsl_distro ]]; then
-        host="WSL: $wsl_distro"
         authority=wsl+$(_code_remote_url_escape "$wsl_distro")
     fi
     uri="vscode://vscode-remote/$authority$(_code_remote_url_escape "$target")"
@@ -118,11 +116,11 @@ code-remote() {
         uri+=:${position:-1}
     fi
     # herdr drops OSC 1337, and with mouse capture on (herdr >= 0.9.4) it no longer passes OSC 8 to the outer terminal
-    # and opens only http(s) links itself, so the bare URI is printed too for the outer terminal's own URL detection.
-    # Both lines link to the URI through vscode.dev's redirect page, an https URL that herdr opens on Ctrl+click; the
-    # dotfiles xdg-open takes the URI out of it and has WezTerm open it without a browser.
+    # and opens only http(s) links itself, so the URI is printed as text for the outer terminal's own URL detection on
+    # Shift+Ctrl+click. It also links to the URI through vscode.dev's redirect page, an https URL that herdr opens on
+    # Ctrl+click; the dotfiles xdg-open takes the URI out of it and has WezTerm open it without a browser.
     local redirect="https://vscode.dev/redirect?url=$(_code_remote_url_escape "$uri")"
-    printf '\e]8;;%s\e\\Open in VS Code: %s:%s\e]8;;\e\\\n\e]8;;%s\e\\%s\e]8;;\e\\\n' "$redirect" "$host" "$target" "$redirect" "$uri"
+    printf '\e]8;;%s\e\\%s\e]8;;\e\\\n' "$redirect" "$uri"
 }
 
 # Same escaping as fish's `string escape --style=url`.
