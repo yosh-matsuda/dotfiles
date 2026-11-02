@@ -159,6 +159,32 @@
       - copilot
   changed_when: false
 
+- name: List herdr plugins
+  when:
+    - is_ubuntu
+    - dotfiles_herdr_binary.stat.exists | default(false)
+  ansible.builtin.command:
+    argv:
+      - "{{ brew_bin_dir }}/herdr"
+      - plugin
+      - list
+      - --json
+  register: dotfiles_herdr_plugins
+  changed_when: false
+  check_mode: false
+
+# Ctrl+click on a file link that an agent prints opens the file in VS Code.
+- name: Link the code-remote herdr plugin
+  when:
+    - dotfiles_herdr_plugins is not skipped
+    - dotfiles_herdr_plugins.stdout is not search('"plugin_id":"code-remote"')
+  ansible.builtin.command:
+    argv:
+      - "{{ brew_bin_dir }}/herdr"
+      - plugin
+      - link
+      - "{{ home_dir }}/dotfiles/files/herdr/code-remote"
+
 # The merge is one way, so keys that exist only in the live file are easy to
 # lose track of. The fish prompt cannot report them because it only sees files
 # inside this repository, so report them where the merge happens.
