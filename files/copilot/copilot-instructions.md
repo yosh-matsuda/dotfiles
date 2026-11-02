@@ -38,6 +38,14 @@ These rules apply to the conversation only, like the rules above.
     chain of nouns.
 *   Do not use emoji or the words of feel: 「手触り」「解像度を上げる」「腹落ち」.
 
+## File References in Replies
+
+*   When a reply names a file or a directory on this machine, write it as a Markdown link whose
+    target is the absolute path, such as `[config.toml](/home/me/project/config.toml)`. To point at
+    a line, append `:LINE` to the target: `[main](/home/me/project/src/main.rs:42)`. Wrap a target
+    that holds a space in angle brackets. Use the file name as the link text, and do not put the
+    link inside a code span. The terminal opens these links in VS Code.
+
 ## Questions with `ask_user`
 
 *   Make the `message` self-contained. I see only the form. I do not see the files, the tool

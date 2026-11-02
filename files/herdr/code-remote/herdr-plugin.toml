@@ -1,0 +1,33 @@
+id = "code-remote"
+name = "Open in VS Code"
+version = "0.1.0"
+# 0.9.4 stopped passing OSC 8 links to the outer terminal under mouse capture; link_handlers are what reach them.
+min_herdr_version = "0.9.4"
+description = "Open file links that agents print, such as Copilot CLI's Markdown links, in VS Code with code-remote.sh"
+# code-remote.sh reads /proc and ss.
+platforms = ["linux"]
+
+[[actions]]
+id = "open"
+title = "Open in VS Code"
+description = "Open the clicked file link, or the pane's directory, in VS Code"
+# Plugin commands run with the herdr server's environment, which may lack PATH from ~/.profile.
+command = ["bash", "-c", 'if [ -r "$HOME/.profile" ]; then . "$HOME/.profile" >/dev/null 2>&1; fi; exec python3 ./open-link.py']
+
+# code-remote.sh prints a vscode:// link when no VS Code window can open the file. herdr opens only http(s) links,
+# so the popup shows it as text for Shift+Ctrl+click in the outer terminal.
+[[panes]]
+id = "link"
+title = "Open in VS Code"
+placement = "popup"
+height = 8
+command = ["bash", "-c", 'printf "%s\n" "$CODE_REMOTE_LINK"; read -rsn 1 -p "Press any key to close "']
+
+# Copilot CLI writes a Markdown link target into OSC 8 as it is, so a file link arrives as a path rather than a URL.
+# herdr detects only http(s) links in plain text, so this handler sees only OSC 8 targets. It takes file: URLs, targets
+# without a scheme, and NAME:LINE[:COLUMN]; any other scheme, such as http(s) or mailto, keeps herdr's own handling.
+[[link_handlers]]
+id = "file"
+title = "Open in VS Code"
+pattern = '^(?:file:|[^:]*$|[^:]*[^A-Za-z0-9+.:-]|[A-Za-z0-9+.-]+:[0-9]+(?::[0-9]+)?$)'
+action = "open"
