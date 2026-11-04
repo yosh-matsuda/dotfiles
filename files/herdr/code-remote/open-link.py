@@ -60,12 +60,22 @@ def git_toplevel(path: str) -> str | None:
     return result.stdout.strip() or None
 
 
+def file_to_reveal(directory: str) -> str | None:
+    """Return a file in a directory to open, so that VS Code's explorer.autoReveal expands the directory to it."""
+    try:
+        files = [entry for entry in os.scandir(directory) if entry.is_file()]
+    except OSError:
+        return None
+    files.sort(key=lambda e: (not e.name.lower().startswith("readme"), e.name.startswith("."), e.name.lower()))
+    return files[0].path if files else None
+
+
 def main() -> int:
     context = json.loads(os.environ.get("HERDR_PLUGIN_CONTEXT_JSON") or "{}")
     url = os.environ.get("HERDR_PLUGIN_CLICKED_URL") or context.get("clicked_url") or ""
     cwd = context.get("focused_pane_cwd") or os.path.expanduser("~")
 
-    target, position = cwd, ""
+    target, position, reveal = cwd, "", []
     if url:
         resolved = resolve(url, cwd)
         if resolved is None:
@@ -73,15 +83,18 @@ def main() -> int:
             return 1
         target, position = resolved
         # VS Code opens a directory as a workspace, and Peacock's surpriseMeOnStartup writes .vscode/settings.json into
-        # each one, so a linked directory opens the repository that holds it instead.
+        # each one, so a linked directory opens the repository that holds it instead, with a file of the directory
+        # because neither the code CLI nor a vscode:// URI can select a folder in the explorer.
         if os.path.isdir(target):
             root = git_toplevel(target)
             if root is None:
                 notify("Open in VS Code", f"Not in a git repository: {target}")
                 return 0
+            if os.path.realpath(target) != os.path.realpath(root) and (file := file_to_reveal(target)):
+                reveal = [file]
             target = root
 
-    args = ["--goto", "--", f"{target}:{position}"] if position else ["--", target]
+    args = ["--goto", "--", f"{target}:{position}"] if position else ["--", target, *reveal]
     result = subprocess.run(
         ["bash", str(CODE_REMOTE), *args],
         capture_output=True,
