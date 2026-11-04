@@ -47,6 +47,19 @@ def resolve(url: str, cwd: str) -> tuple[str, str] | None:
     return None
 
 
+def git_toplevel(path: str) -> str | None:
+    """Return the root of the git working tree that holds a directory."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", path, "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def main() -> int:
     context = json.loads(os.environ.get("HERDR_PLUGIN_CONTEXT_JSON") or "{}")
     url = os.environ.get("HERDR_PLUGIN_CLICKED_URL") or context.get("clicked_url") or ""
@@ -59,6 +72,14 @@ def main() -> int:
             notify("Open in VS Code", f"No such file or directory: {unquote(url)}")
             return 1
         target, position = resolved
+        # VS Code opens a directory as a workspace, and Peacock's surpriseMeOnStartup writes .vscode/settings.json into
+        # each one, so a linked directory opens the repository that holds it instead.
+        if os.path.isdir(target):
+            root = git_toplevel(target)
+            if root is None:
+                notify("Open in VS Code", f"Not in a git repository: {target}")
+                return 0
+            target = root
 
     args = ["--goto", "--", f"{target}:{position}"] if position else ["--", target]
     result = subprocess.run(
