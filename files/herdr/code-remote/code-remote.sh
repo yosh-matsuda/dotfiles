@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Open a directory or file in VS Code over WSL or a connected window, else print a clickable Remote link.
-# Usage: code-remote.sh [-g|--goto] [--] [PATH]
-# -g takes FILE:LINE[:COLUMN] like `code --goto`. Both the herdr plugin in this directory and the herdr shortcut in
+# Usage: code-remote.sh [-g|--goto] [--] [PATH [FILE...]]
+# -g takes FILE:LINE[:COLUMN] like `code --goto`. Each FILE opens in the same window as PATH, except through the printed
+# Remote link, which opens PATH alone. Both the herdr plugin in this directory and the herdr shortcut in
 # files/herdr/config.toml run this script, so it depends on bash alone, not on fish.
 
 code-remote() {
@@ -30,6 +31,15 @@ code-remote() {
     target=$(realpath -- "$target") || return 1
     local open_args=("$target")
     [[ -n $position && -f $target ]] && open_args=(--goto "$target:$position")
+    local file
+    for file in "${@:2}"; do
+        if [[ ! -f $file ]]; then
+            echo "code-remote: no such file: $file" >&2
+            return 1
+        fi
+        file=$(realpath -- "$file") || return 1
+        open_args+=("$file")
+    done
 
     # On WSL, `code` (VS Code's Windows launcher, or the remote CLI in a VS Code terminal) opens the folder through the WSL remote;
     # the Remote-SSH fallback below would reach this machine over SSH instead.
