@@ -14,13 +14,13 @@ description = "Open the clicked file link, or the pane's directory, in VS Code"
 # Plugin commands run with the herdr server's environment, which may lack PATH from ~/.profile.
 command = ["bash", "-c", 'if [ -r "$HOME/.profile" ]; then . "$HOME/.profile" >/dev/null 2>&1; fi; exec python3 ./open-link.py']
 
-# code-remote.sh prints a vscode:// link when no VS Code window can open the file. herdr opens only http(s) links,
-# so the popup shows it as text for Shift+Ctrl+click in the outer terminal.
+# code-remote.sh prints a vscode:// link when no VS Code window can open the file, such as on an SSH machine without a
+# connected window. The link targets vscode.dev's redirect page, which herdr opens on Ctrl+click in a pane. A popup
+# takes every mouse event itself, so herdr never sees the Ctrl+click there; an overlay is a normal pane, where it does.
 [[panes]]
 id = "link"
 title = "Open in VS Code"
-placement = "popup"
-height = 8
+placement = "overlay"
 command = ["bash", "-c", 'printf "%s\n" "$CODE_REMOTE_LINK"; read -rsn 1 -p "Press any key to close "']
 
 # Copilot CLI writes a Markdown link target into OSC 8 as it is, so a file link arrives as a path rather than a URL.
