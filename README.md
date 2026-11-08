@@ -259,7 +259,7 @@ The outer terminals run on Windows and are configured as described in [Applicati
 
 ### Installation
 
-The `brew` role installs Copilot CLI as the Homebrew cask `copilot-cli`. The playbook only installs it: Copilot CLI downloads newer versions into `~/.cache/copilot/pkg` and runs them on the next launch, so the version under the Caskroom stays old. The cask is marked `auto_updates`, which `brew upgrade` skips unless `--greedy` is given. fish puts `~/.local/bin` before Homebrew in `PATH`, so a copy from the install script in `~/.local/bin/copilot` keeps running there; delete it after moving a machine to Homebrew.
+The `brew` role installs Copilot CLI as the Homebrew cask `copilot-cli`. The playbook only installs it; updates are left to Copilot CLI. The current standalone CLI writes updates beside its executable, so its installation directory must be writable. On Linux servers with a shared `linuxbrew` installation, the role grants all users write access to existing files under `/home/linuxbrew/.linuxbrew/Caskroom/copilot-cli` and sets default ACLs on its directories for new files. Every local user is trusted to modify the CLI that other users run. The role reapplies these permissions after cask installation; if Homebrew recreates the directory outside the playbook, rerun the role. WSL uses a user-owned Homebrew installation and does not need these ACLs. Homebrew's recorded cask version may differ from the self-updated CLI version. The cask is marked `auto_updates`, which `brew upgrade` skips unless `--greedy` is given. fish puts `~/.local/bin` before Homebrew in `PATH`, so a copy from the install script in `~/.local/bin/copilot` keeps running there; delete it after moving a machine to Homebrew.
 
 ### Settings
 

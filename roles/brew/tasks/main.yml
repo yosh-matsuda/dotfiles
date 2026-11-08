@@ -136,6 +136,41 @@
   environment:
     HOME: "{{ brew_exec_home }}"
 
+- name: Allow shared Copilot CLI self-updates on Linux servers
+  when:
+  - is_ubuntu
+  - not brew_is_wsl
+  - brew_binary_path is not none and brew_binary_stat.stat.exists
+  - "'copilot-cli' in brew_casks"
+  become: true
+  block:
+  - name: Allow all users to update existing Copilot CLI files
+    ansible.posix.acl:
+      path: "{{ brew_prefix_path }}/Caskroom/copilot-cli"
+      etype: other
+      permissions: rwX
+      recursive: true
+      follow: false
+      state: present
+
+  - name: Find Copilot CLI directories for inherited permissions
+    ansible.builtin.find:
+      paths: "{{ brew_prefix_path }}/Caskroom/copilot-cli"
+      file_type: directory
+      recurse: true
+      hidden: true
+    register: brew_copilot_directories
+
+  - name: Allow all users to update new Copilot CLI files
+    ansible.posix.acl:
+      path: "{{ item }}"
+      etype: other
+      permissions: rwx
+      default: true
+      follow: false
+      state: present
+    loop: "{{ [brew_prefix_path ~ '/Caskroom/copilot-cli'] + (brew_copilot_directories.files | map(attribute='path') | list) }}"
+
 - name: Remove linuxbrew Ansible temporary directory
   when:
   - is_ubuntu
