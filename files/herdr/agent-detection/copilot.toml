@@ -8,6 +8,11 @@
 # working. Copilot draws the hint in the activity row of its footer, under the
 # input box and above the one-line status line, so the rule now reads only the
 # bottom lines and skips the input box rows, which start with "┃".
+#
+# Added until herdr settles https://github.com/herdrdev/herdr/issues/5799:
+# ctrl_c_interrupt_working. Copilot CLI 1.0.107 shows "ctrl+c interrupt" in
+# that row instead of "esc esc interrupt", which no published rule matches, so
+# a working Copilot fell back to idle.
 id = "copilot"
 version = "2026.08.29.1"
 min_engine_version = 1
@@ -48,3 +53,11 @@ priority = 100
 region = "bottom_non_empty_lines(4)"
 visible_working = true
 line_regex = ['(?i)^\s*[^┃\s].*\besc\s+(?:to\s+cancel|cancel|again\s+to\s+cancel|interrupt)\b']
+
+[[rules]]
+id = "ctrl_c_interrupt_working"
+state = "working"
+priority = 100
+region = "bottom_non_empty_lines(4)"
+visible_working = true
+line_regex = ['(?i)^\s*[^┃\s].*\bctrl\+c\s+interrupt\b']
