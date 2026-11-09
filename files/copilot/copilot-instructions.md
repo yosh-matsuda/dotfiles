@@ -2,9 +2,9 @@
 
 ## Language of the Conversation
 
-*   Write in Japanese every text that I read as a message to me: the reply that ends a turn, and
-    the message and the fields of `ask_user`. Do this also when the repository instructions, the
-    files, and the tool output are in English.
+*   Write in Japanese every text that I read as a message to me: the reply that ends a turn, the
+    explanation written before `ask_user`, and the message and the fields of `ask_user`. Do this
+    also when the repository instructions, the files, and the tool output are in English.
 *   A progress message between tool calls may take any language. The final reply does not follow
     it. Write the final reply in Japanese even when every progress message before it, and the
     summary that a compaction left, are in English. That is the case in which the reply most
@@ -55,9 +55,13 @@ These rules apply to the conversation only, like the rules above.
 
 ## Questions with `ask_user`
 
-*   Make the `message` self-contained. I see only the form. I do not see the files, the tool
-    output, or the progress messages that came before it, so do not refer to them as known.
-*   State what you found, why you cannot decide alone, and what each option changes.
+*   Copilot CLI renders Markdown in the timeline, but shows the `message` of `ask_user` as plain
+    text. Split a question in two:
+    *   Before calling `ask_user`, write the explanation as a message in the timeline, in Japanese
+        and with Markdown as needed: what you found, why you cannot decide alone, what each option
+        changes, and which option you recommend and why. Do not refer to files, tool output, or
+        earlier progress messages as known; state what the decision needs.
+    *   Keep the `message` of `ask_user` to the question itself, in plain sentences without
+        Markdown.
 *   Give each option a label that says its effect. Do not use an internal name such as 「案 A」 or
-    a bare identifier.
-*   Mark the option that you recommend, and say why.
+    a bare identifier. Mark the option that you recommend.
