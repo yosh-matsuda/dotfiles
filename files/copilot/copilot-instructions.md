@@ -38,13 +38,20 @@ These rules apply to the conversation only, like the rules above.
     chain of nouns.
 *   Do not use emoji or the words of feel: 「手触り」「解像度を上げる」「腹落ち」.
 
-## File References in Replies
+## Links in Replies
 
 *   When a reply names a file or a directory on this machine, write it as a Markdown link whose
     target is the absolute path, such as `[config.toml](/home/me/project/config.toml)`. To point at
     a line, append `:LINE` to the target: `[main](/home/me/project/src/main.rs:42)`. Wrap a target
     that holds a space in angle brackets. Use the file name as the link text, and do not put the
     link inside a code span. The terminal opens these links in VS Code.
+*   When a reply names an issue, a merge request, a pull request, a pipeline, or a job on GitLab
+    or GitHub, write it as a Markdown link whose target is its URL. Use the reference as the link
+    text, such as `[!12](https://gitlab.example.com/group/project/-/merge_requests/12)`. Do this
+    in each cell of a table too. Take the URL from a tool output or an API response of this
+    session, and do not build one from memory. This rule applies to the conversation only. A
+    text that goes to GitLab or GitHub follows the rules of the repository, which can ask for
+    the bare reference `!12` instead of the URL.
 
 ## Questions with `ask_user`
 
