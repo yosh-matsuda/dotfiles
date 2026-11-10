@@ -28,6 +28,28 @@ function choiceLines(choices, selected) {
     ];
 }
 
+// The answer names a choice by its value (CLI 1.0.105 and older) or by its title (1.0.107 and
+// newer). A multi-select answer joins them with ", ", which a single one may contain too, so the
+// longest known choice is taken first and the text up to the next ", " counts as typed.
+function selectedValues(choices, value, multiple) {
+    const names = choices
+        .flatMap((choice) => [choice.title, choice.value].map((name) => ({ name, value: choice.value })))
+        .sort((a, b) => b.name.length - a.name.length);
+    const whole = names.find(({ name }) => name === value);
+    if (whole || !multiple) {
+        return [whole?.value ?? value];
+    }
+    const selected = [];
+    let rest = value;
+    while (rest !== "") {
+        const known = names.find(({ name }) => rest === name || rest.startsWith(`${name}, `));
+        const length = known?.name.length ?? (rest.includes(", ") ? rest.indexOf(", ") : rest.length);
+        selected.push(known?.value ?? rest.slice(0, length));
+        rest = rest.slice(length + 2);
+    }
+    return selected;
+}
+
 function fieldLines(key, property, value) {
     const name = property.title ?? key;
     const choices = choicesOf(property);
@@ -37,26 +59,29 @@ function fieldLines(key, property, value) {
             : value;
         return [`${name}: ${shown ?? "(no answer)"}`];
     }
-    // A multi-select answer joins the values with ", ", which a single value may contain too.
-    const selected = value === undefined
-        ? []
-        : choices.some((choice) => choice.value === value) || property.type !== "array"
-            ? [value]
-            : value.split(", ");
+    const selected = value === undefined ? [] : selectedValues(choices, value, property.type === "array");
     return [name, ...choiceLines(choices, selected)];
 }
 
-// `detailedContent` holds one `key: value` line per field after "User responded:". A typed
-// answer may span lines, so a line that starts no field continues the one before it.
+// `detailedContent` holds one line per answered field after "User responded:". The line starts
+// with the key of the field (CLI 1.0.105 and older) or with its title (1.0.107 and newer), then
+// ": ". A title may hold ": " or repeat another title, so the longest name of a field not yet
+// answered is taken. A typed answer may span lines, so a line that starts no field continues the
+// one before it.
 function parseAnswers(text, properties) {
+    const names = Object.entries(properties)
+        .flatMap(([key, property]) => [property.title, key]
+            .filter((name) => typeof name === "string" && name !== "")
+            .map((name) => ({ key, name })))
+        .sort((a, b) => b.name.length - a.name.length);
     const values = {};
     let current;
     for (const line of text.split("\n").slice(1)) {
-        const separator = line.indexOf(": ");
-        const key = separator < 0 ? undefined : line.slice(0, separator);
-        if (key !== undefined && Object.hasOwn(properties, key) && !(key in values)) {
-            current = key;
-            values[key] = line.slice(separator + 2);
+        const field = names.find(({ key, name }) => !(key in values)
+            && (line.startsWith(`${name}: `) || line === `${name}:`));
+        if (field) {
+            current = field.key;
+            values[current] = line.slice(field.name.length + 2);
         } else if (current !== undefined) {
             values[current] += `\n${line}`;
         }
