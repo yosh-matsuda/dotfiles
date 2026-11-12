@@ -31,6 +31,30 @@
         return { wsl_distro_name = {{ windows_wsl_distro_name | to_json }} }
       dest: "{{ windows_wezterm_config_dir }}/machine.lua"
 
+  - name: Find SSH keys and config to copy to Windows
+    ansible.builtin.find:
+      paths: "{{ windows_ssh_src_dir }}"
+      file_type: file
+      excludes: "{{ windows_ssh_excludes }}"
+    register: windows_ssh_files
+
+  - name: Ensure Windows SSH directory exists
+    when: windows_ssh_files.files | length > 0
+    ansible.builtin.file:
+      path: "{{ windows_ssh_dest_dir }}"
+      state: directory
+
+  # remote_src renames its temp file while the file is still open, and DrvFs then fails to stat it.
+  # The role runs on the controller itself, so the controller path is the same file.
+  - name: Copy SSH keys and config to Windows
+    ansible.builtin.copy:
+      src: "{{ item.path }}"
+      dest: "{{ windows_ssh_dest_dir }}/{{ item.path | basename }}"
+    diff: false
+    loop: "{{ windows_ssh_files.files | sort(attribute='path') }}"
+    loop_control:
+      label: "{{ item.path | basename }}"
+
   - name: Check VS Code user directory
     ansible.builtin.stat:
       path: "{{ windows_vscode_user_dir }}"

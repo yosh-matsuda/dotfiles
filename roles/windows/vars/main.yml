@@ -3,3 +3,9 @@ windows_cmd_path: /mnt/c/Windows/System32/cmd.exe
 windows_wezterm_config_dir: "{{ windows_home }}/.config/wezterm"
 windows_vscode_user_dir: "{{ windows_home }}/AppData/Roaming/Code/User"
 windows_scripts_dir: "{{ playbook_dir }}/files/scripts"
+windows_ssh_src_dir: "{{ ansible_facts['env']['HOME'] }}/.ssh"
+windows_ssh_dest_dir: "{{ windows_home }}/.ssh"
+windows_ssh_excludes:
+- authorized_keys
+- known_hosts
+- known_hosts.*

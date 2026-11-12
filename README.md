@@ -21,7 +21,7 @@ On Ubuntu, WSL, and macOS, with the Ansible playbook:
 On Windows:
 
 -   Windows applications, WSL, fonts, and key remapping, with `winget configure`
--   WezTerm and VS Code settings, copied from WSL by the `windows` role
+-   WezTerm and VS Code settings, and the SSH keys and config of WSL, copied from WSL by the `windows` role
 
 ## Getting started
 
@@ -155,6 +155,7 @@ On WSL, the `windows` role writes into the Windows user profile through `/mnt/c`
 -   WezTerm: [files/windows/wezterm/wezterm.lua](files/windows/wezterm/wezterm.lua) is copied to `%USERPROFILE%\.config\wezterm\wezterm.lua` and replaces it entirely. Values that differ per machine go into a generated `machine.lua` next to it; the default domain is the WSL distribution that runs the playbook. Edits made directly on the Windows side are overwritten.
 -   WezTerm and GPU loss: when the OpenGL context is lost, for example when an external GPU is unplugged, WezTerm closes the GUI window but never recreates it, so the panes and their WSL shells keep running unseen. A herdr client left in such a process repeats every notification. Every 5 seconds the config checks for mux windows in the active workspace while no GUI window exists; after two hits in a row it starts a new `wezterm-gui.exe start --always-new-process` and exits, which also ends the old WSL shells. Rendering cannot simply be pinned to the integrated GPU: the per-app Windows graphics preference does not reach WGL here, the ANGLE path (`prefer_egl`) follows it but loses window transparency, and `front_end = 'Software'` still loads the system `opengl32.dll` because `wezterm-gui.exe` imports it statically.
 -   VS Code: only the keys in [files/windows/vscode](files/windows/vscode) are merged into `%APPDATA%\Code\User`; everything else stays with Settings Sync. When that directory does not exist, the merge is skipped with a message. Settings are overwritten key by key, and keybindings are appended when missing. The files are JSONC, so [files/scripts/vscode-settings-merge.mjs](files/scripts/vscode-settings-merge.mjs) edits them with `jsonc-parser`, the library VS Code itself uses, which keeps comments and formatting. The role installs it with `npm ci` into `files/scripts/node_modules` when it is missing.
+-   SSH: `~/.ssh` of WSL is the source, and the files directly in it are copied to `%USERPROFILE%\.ssh`, so that Windows applications such as VS Code Remote - SSH use the same keys and `ssh_config`. `known_hosts`, `known_hosts.*`, and `authorized_keys` stay separate on each side. Files that exist only on the Windows side are left as they are, and a key deleted in WSL stays on Windows until you delete it there. Keep `~/.ssh/config` valid for the OpenSSH of Windows: write paths as `~/.ssh/...`, and avoid options that Windows does not support, such as `ControlMaster`. WSL cannot use the Windows directory directly: `/mnt/c` is mounted without `metadata`, so the files appear with mode 777, and OpenSSH refuses such private keys and config. When `%USERPROFILE%\.ssh` is a symlink into a synced folder such as OneDrive, the copy goes there, and the last WSL that runs the playbook wins for a file name that differs between machines.
 
 ## Terminal
 
