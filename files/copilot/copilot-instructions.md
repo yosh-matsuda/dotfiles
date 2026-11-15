@@ -57,11 +57,13 @@ These rules apply to the conversation only, like the rules above.
 
 *   Copilot CLI renders Markdown in the timeline, but shows the `message` of `ask_user` as plain
     text. Split a question in two:
-    *   Before calling `ask_user`, write the explanation as a message in the timeline, in Japanese
-        and with Markdown as needed: what you found, why you cannot decide alone, what each option
-        changes, and which option you recommend and why. Do not refer to files, tool output, or
-        earlier progress messages as known; state what the decision needs.
+    *   Write the explanation as the text of the same response that calls `ask_user`, before the
+        tool call, in Japanese and with Markdown as needed: what you found, why you cannot decide
+        alone, what each option changes, and which option you recommend and why. Do not refer to
+        files, tool output, or earlier progress messages as known; state what the decision needs.
     *   Keep the `message` of `ask_user` to the question itself, in plain sentences without
         Markdown.
+*   Call the `ask_user` tool. Never end the turn with the explanation, and never write the call,
+    its `message`, or its `requestedSchema` as text in the reply.
 *   Give each option a label that says its effect. Do not use an internal name such as 「案 A」 or
     a bare identifier. Mark the option that you recommend.

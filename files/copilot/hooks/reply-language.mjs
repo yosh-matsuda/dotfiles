@@ -1,6 +1,7 @@
 // Keeps the replies addressed to the user in Japanese. Progress messages between tool calls may
 // use any language, so only two things are checked: the reply that ends a turn (`agentStop`) and
 // the question of `ask_user` (`preToolUse`). Run as `node reply-language.mjs stop|ask`.
+// `agentStop` also blocks a reply that wrote the call of `ask_user` as text instead of calling it.
 //
 // Japanese is told apart by its kana, which no other script uses. Chinese has kanji but no kana,
 // so it fails the check like English, Russian or Spanish.
@@ -18,10 +19,12 @@ const RETRY_ATTEMPTS = 8;
 const RETRY_INTERVAL_MS = 250;
 const FRESH_WINDOW_MS = 5000;
 const KANA = /[\u3040-\u309f\u30a0-\u30ff]/;
+const FENCED_CODE = /^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?^[ \t]*\1[`~]*[ \t]*$/gm;
+const ASK_USER_AS_TEXT = /^[ \t]*<ask_user>/m;
 
 function countLetters(text) {
     const prose = text
-        .replace(/^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?^[ \t]*\1[`~]*[ \t]*$/gm, "")
+        .replace(FENCED_CODE, "")
         .replace(/`[^`\n]*`/g, "")
         .replace(/\[([^\]\n]*)\]\([^)\n]*\)/g, (link, label) => (KANA.test(label) ? label : ""))
         .replace(/https?:\/\/\S+/g, "");
@@ -34,6 +37,11 @@ function countLetters(text) {
 export function isJapanese(text) {
     const { letters, kana } = countLetters(text);
     return letters < MIN_LETTERS || kana / letters >= MIN_KANA_RATIO;
+}
+
+// The model sometimes ends the turn with the call of `ask_user` written out as text.
+export function writesAskUserAsText(text) {
+    return ASK_USER_AS_TEXT.test(text.replace(FENCED_CODE, ""));
 }
 
 // The labels of choices are mostly identifiers, so they fail only when they hold no kana at all.
@@ -128,6 +136,13 @@ async function onStop(input) {
         const fresh = reply && (stopTime === undefined || reply.time === undefined
             || reply.time >= stopTime - FRESH_WINDOW_MS);
         if (fresh) {
+            if (writesAskUserAsText(reply.text)) {
+                return {
+                    decision: "block",
+                    reason: "直前の回答は ask_user の呼び出しを本文に書いて終わっていた。説明は繰り返さず、"
+                        + "同じ質問で ask_user ツールを呼ぶ。",
+                };
+            }
             if (isJapanese(reply.text)) {
                 return undefined;
             }
