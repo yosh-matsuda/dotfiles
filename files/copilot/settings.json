@@ -52,7 +52,7 @@
     "agents": {
       "code-review": {
         "effortLevel": "high",
-        "model": "claude-opus-5.5"
+        "model": "gemini-4-carbon"
       },
       "general-purpose": {
         "contextTier": "default",
