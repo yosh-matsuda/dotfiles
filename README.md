@@ -281,6 +281,8 @@ The playbook reports local-only keys after the Copilot tasks. Check by hand with
 $ python3 files/scripts/copilot-settings-drift.py
 ```
 
+Copilot sessions in the VS Code agent host ignore `includeCoAuthoredBy` of `~/.copilot/settings.json` and add a `Co-authored-by: Copilot` trailer to their commits unless `includeCoAuthoredBy` is `false` in `globalStorage/agent-host-config.json` of the VS Code user data on the host that runs them. `git.addAICoAuthor` does not turn it off. The key is tracked in [files/windows/vscode/globalStorage/agent-host-config.json](files/windows/vscode/globalStorage/agent-host-config.json): the `windows` role merges it into `%APPDATA%\Code\User`, and the `dotfiles` role merges it into `~/.vscode-server/data/User` when that file exists. A session reads the value when it starts or resumes.
+
 `~/.copilot/hooks` is a symlink into this repository, so `herdr integration install copilot` writes into the working tree. Expect `files/copilot/hooks/herdr-agent-state.sh` to change when herdr updates.
 
 ### Session usage

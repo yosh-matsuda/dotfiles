@@ -95,5 +95,6 @@
       loop:
       - settings.json
       - keybindings.json
+      - globalStorage/agent-host-config.json
       register: windows_vscode_merge
       changed_when: "'changed' in windows_vscode_merge.stdout"

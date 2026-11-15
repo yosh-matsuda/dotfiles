@@ -244,6 +244,27 @@
   ansible.builtin.debug:
     msg: "Local only, not tracked in files/copilot/settings.json: {{ dotfiles_copilot_untracked | join(', ') }}"
 
+# Copilot sessions in the VS Code agent host ignore includeCoAuthoredBy of
+# ~/.copilot/settings.json and read this file of the host they run on instead.
+# The VS Code server writes it, so it is changed only when it already exists.
+- name: Read the agent host config of the VS Code server
+  ansible.builtin.slurp:
+    src: "{{ home_dir }}/.vscode-server/data/User/globalStorage/agent-host-config.json"
+  register: dotfiles_vscode_agent_host_config_live
+  failed_when: false
+
+- name: Merge tracked keys into the agent host config of the VS Code server
+  vars:
+    dotfiles_vscode_agent_host_config_current: "{{ dotfiles_vscode_agent_host_config_live.content | b64decode | from_json }}"
+    dotfiles_vscode_agent_host_config_merged: "{{ dotfiles_vscode_agent_host_config_current | combine(lookup('file', playbook_dir ~ '/files/windows/vscode/globalStorage/agent-host-config.json') | from_json) }}"
+  when:
+    - "'content' in dotfiles_vscode_agent_host_config_live"
+    - dotfiles_vscode_agent_host_config_merged != dotfiles_vscode_agent_host_config_current
+  ansible.builtin.copy:
+    content: "{{ dotfiles_vscode_agent_host_config_merged | to_nice_json(indent='\t', sort_keys=false) }}\n"
+    dest: "{{ home_dir }}/.vscode-server/data/User/globalStorage/agent-host-config.json"
+    mode: preserve
+
 - name: Ensure bashrc fragments are present
   ansible.builtin.blockinfile:
     path: "{{ home_dir }}/.bashrc"
