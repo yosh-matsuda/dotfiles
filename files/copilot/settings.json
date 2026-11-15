@@ -33,6 +33,12 @@
         "type": "command"
       },
       {
+        "bash": "command -v node >/dev/null 2>&1 && node \"$HOME/.copilot/hooks/ask-user-context.mjs\" || true",
+        "matcher": "ask_user",
+        "timeoutSec": 5,
+        "type": "command"
+      },
+      {
         "bash": "[ -n \"$COPILOT_CUSTOM_INSTRUCTIONS_DIRS\" ] && command -v node >/dev/null 2>&1 && node \"$HOME/.copilot/hooks/persona-name.mjs\" tool || true",
         "timeoutSec": 5,
         "type": "command"

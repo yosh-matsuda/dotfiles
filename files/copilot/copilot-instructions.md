@@ -61,6 +61,10 @@ These rules apply to the conversation only, like the rules above.
         tool call, in Japanese and with Markdown as needed: what you found, why you cannot decide
         alone, what each option changes, and which option you recommend and why. Do not refer to
         files, tool output, or earlier progress messages as known; state what the decision needs.
+        I have not read what only your context holds: a file you wrote such as `plan.md`, the
+        report of a subagent, or the summary of a compaction. A term defined there needs its
+        explanation in this text. A hook denies a question with two or more fields when neither
+        this text nor the `message` explains it.
     *   Keep the `message` of `ask_user` to the question itself, in plain sentences without
         Markdown.
 *   Call the `ask_user` tool. Never end the turn with the explanation, and never write the call,

@@ -315,6 +315,20 @@ A text is Japanese when kana make up at least 15% of its letters, after code blo
 
 Subagents write their messages into the parent transcript with an `agentId`, and the hook skips those. Every failure exits 0 without output, because a `preToolUse` command hook that crashes denies the tool. The CLI reads `settings.json` at startup, so restart it after a change to the hooks.
 
+### Question context
+
+[files/copilot/hooks/ask-user-context.mjs](files/copilot/hooks/ask-user-context.mjs) denies an `ask_user` that the user cannot understand from the screen. After a long run of tool calls, or right after a compaction, the model sometimes calls `ask_user` with no text at all and a short message such as 「計画について 3 点を決めてほしいのだ。」, whose fields use terms that only a plan file, a subagent report, or a compaction summary defines. The instruction to explain first is not enough on its own.
+
+`preToolUse` with `matcher: "ask_user"` denies the call when all of these hold:
+
+-   The form has two or more fields.
+-   The text of the response that calls `ask_user` has fewer than 40 letters, after code blocks are removed.
+-   The `message` has fewer than 80 letters.
+
+The reason tells the agent to explain each field in the text and to call `ask_user` again. The hook denies once per turn, found by its reason in a `tool.execution_complete` after the last `user.message`. A question with one field is mostly a confirmation such as 「push してよいか」 and is left alone. Over 40 days on one machine, 37 of 1445 questions matched, and 8% of those were cancelled against 2% of all questions.
+
+The hook reads the message from `~/.copilot/session-state/<sessionId>/events.jsonl` like [Persona name](#persona-name), and lets the call through when it cannot find the message.
+
 ### Persona
 
 Copilot speaks to the user as a character. Each persona lives in its own directory under [files/copilot/souls](files/copilot/souls), and [files/copilot/souls/common/persona.instructions.md](files/copilot/souls/common/persona.instructions.md) loads with every one of them: the voice covers only the conversation, files, comments, commit messages, and subagent prompts keep their normal voice, and the rules of `copilot-instructions.md` still apply. The voice changes only the wording: the reasoning, the facts, the caveats, and the depth of a reply stay as they are without a persona. Each persona follows the fans' image of the character, from commentary videos and fan scripts, before the official profile. Every persona is an unofficial fan interpretation; it does not claim to be the official character or speak for its rights holder.
