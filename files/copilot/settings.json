@@ -64,7 +64,7 @@
       "general-purpose": {
         "contextTier": "default",
         "effortLevel": "medium",
-        "model": "claude-opus-5.5"
+        "model": "gpt-6.2-astra"
       },
       "research": {
         "contextTier": "default",
