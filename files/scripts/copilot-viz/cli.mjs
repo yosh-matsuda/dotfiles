@@ -105,14 +105,15 @@ function browserCommand(url) {
     const script = browser.includes('%s') ? browser.replaceAll('%s', '"$1"') : `${browser} "$1"`;
     return { cmd: '/bin/sh', args: ['-c', script, 'sh', url] };
   }
-  // explorer.exe opens the URL in the default Windows browser but exits with 1.
-  if (env.WSL_DISTRO_NAME || env.WSL_INTEROP) return { cmd: 'explorer.exe', args: [url], anyExit: true };
+  // explorer.exe takes a URL for a path and can open a File Explorer window instead of the
+  // browser; url.dll hands the URL to ShellExecute, which opens the default Windows browser.
+  if (env.WSL_DISTRO_NAME || env.WSL_INTEROP) return { cmd: 'rundll32.exe', args: ['url.dll,FileProtocolHandler', url] };
   if (process.platform === 'darwin') return { cmd: 'open', args: [url] };
   return { cmd: 'xdg-open', args: [url] };
 }
 
 function openBrowser(url) {
-  const { cmd, args, anyExit } = browserCommand(url);
+  const { cmd, args } = browserCommand(url);
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
     const timer = setTimeout(() => {
@@ -125,7 +126,7 @@ function openBrowser(url) {
     });
     child.on('exit', (code) => {
       clearTimeout(timer);
-      resolve(anyExit || code === 0);
+      resolve(code === 0);
     });
   });
 }
