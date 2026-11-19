@@ -297,12 +297,12 @@ herdr infers Copilot's state from the screen, so a session whose turn ended whil
 
 ```text
 copilot-viz [open] [--port N] [--since DURATION] [--no-open]
-copilot-viz serve [--port N] [--since DURATION] [--idle-exit MINUTES]
+copilot-viz serve [--port N] [--since DURATION] [--idle-exit MINUTES] [--pause-remotes MINUTES]
 copilot-viz status
 copilot-viz stop
 ```
 
--   `copilot-viz` starts the server in the background when none runs, and opens a new link in the browser. The server listens on `127.0.0.1:7421`, or on a free port when that one is taken, and exits after 30 minutes without a viewer. `--since` (default `24h`) sets how long ended sessions stay listed; running sessions always are. When `--port` or `--since` asks for another value, or `git pull` changed the server code, the next `copilot-viz` restarts the server. The server reads the page files on each request, so a change to them needs only a reload of the page.
+-   `copilot-viz` starts the server in the background when none runs, and opens a new link in the browser. The server listens on `127.0.0.1:7421`, or on a free port when that one is taken, and exits after 10 minutes without a viewer. `--since` (default `24h`) sets how long ended sessions stay listed; running sessions always are. When `--port` or `--since` asks for another value, or `git pull` changed the server code, the next `copilot-viz` restarts the server. The server reads the page files on each request, so a change to them needs only a reload of the page.
 -   With **Follow** on, the dashboard moves to a session that waits for input or approval, or to a working session while the shown one is idle; an open panel holds it back. Picking a session turns Follow off, and the URL keeps the pick.
 -   The link holds a pairing code that works once, for two minutes. The page trades it for a token, keeps the token in `localStorage`, and sends it with every request. The token lives only in the server process, so after the server restarts the page asks to pair again: run `copilot-viz`.
 -   The server rejects a request whose `Host` is not `127.0.0.1`, `localhost`, or `[::1]`, which blocks DNS rebinding. On Linux it also rejects a connection from a program of another user, found by the owner of the client socket in `/proc/net/tcp` and `tcp6`. On WSL, the connections of a Windows browser belong to root or have no row there, so the server accepts both.
@@ -337,6 +337,8 @@ The defaults are `node` and `dotfiles/files/scripts/copilot-viz/worker.mjs`, res
 Run `copilot-viz` again after editing this file; it validates the configuration before restarting the local server. Its `--since` window applies to every host. The **Host** selector filters both sessions and counters, and the host list shows connection errors. `copilot-viz status` also lists remote connection states.
 
 A disconnected host retains its last received sessions, marked offline, until a complete new snapshot replaces them. Its unfinished work has an unknown state and is excluded from live counters. SSH retries back off to 30 seconds; a missing or incompatible worker requires updating the remote dotfiles. Remote durations use the remote clock, so clock differences do not inflate elapsed time. Call details are routed by host and session generation, even when hosts have identical session IDs.
+
+When no dashboard page has been in view for 10 minutes, because every tab is hidden or its window is minimized, the server closes SSH to the remote hosts. The host list shows them as `paused`, and their sessions stay as those of a disconnected host. A page that comes into view connects them again at once. `serve --pause-remotes MINUTES` changes the time, and `0` keeps them connected. A hidden tab still keeps the local server running; the server exits only after 10 minutes without any open page.
 
 `copilot-viz stop` stops the SSH clients too. Workers exit when their input closes, or after 45 seconds without a client heartbeat. A remote snapshot is limited to 64 MiB; an oversized snapshot or incompatible protocol shows an error without automatic retries. Reduce the history window or update the remote code, then restart the local server.
 

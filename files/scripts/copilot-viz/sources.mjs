@@ -97,10 +97,8 @@ export function createSources({ remotes = [], sinceMs, onMessage, onError, remot
         h.state = state;
         h.error = error;
         h.retryAt = retryAt;
-        if (state === 'offline') {
-          h.settled = true;
-          onError(new Error(`${h.name}: ${error}`));
-        }
+        if (state === 'offline' || state === 'paused') h.settled = true;
+        if (state === 'offline') onError(new Error(`${h.name}: ${error}`));
         publish(h, [...h.raw.keys()]);
       },
     });
@@ -116,6 +114,13 @@ export function createSources({ remotes = [], sinceMs, onMessage, onError, remot
         publish(local);
       });
       for (const h of hosts.values()) h.connection?.start();
+    },
+    // The sessions of a paused host stay, marked stale like those of a disconnected one.
+    pause() {
+      for (const h of hosts.values()) h.connection?.pause();
+    },
+    resume() {
+      for (const h of hosts.values()) h.connection?.resume();
     },
     async stop() {
       stopped = true;

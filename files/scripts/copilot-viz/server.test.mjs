@@ -39,8 +39,8 @@ function cli(env, ...args) {
   });
 }
 
-function serve(env) {
-  const child = spawn(process.execPath, [CLI, 'serve', '--port', '0'], { env, stdio: ['ignore', 'ignore', 'pipe'] });
+function serve(env, ...args) {
+  const child = spawn(process.execPath, [CLI, 'serve', '--port', '0', ...args], { env, stdio: ['ignore', 'ignore', 'pipe'] });
   child.stderr.resume();
   return { child, exited: once(child, 'exit') };
 }
@@ -86,6 +86,75 @@ function firstEvent(port, token) {
     req.on('error', reject);
     req.end();
   });
+}
+
+// A stream that stays open, and the name that its first message gives it.
+function openStream(port, token) {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path: `/api/stream?token=${encodeURIComponent(token)}`, agent: false }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      const onData = (chunk) => {
+        text += chunk;
+        const m = /^data: (.*)\n\n/m.exec(text);
+        if (!m) return;
+        res.off('data', onData);
+        res.resume();
+        resolve({ viewer: JSON.parse(m[1]).viewer, close: () => req.destroy() });
+      };
+      res.on('data', onData);
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+// A remote host `lab` whose ssh is a shim on PATH that runs the worker on a local directory, so
+// no configured or real SSH host is contacted. Both hosts have a session `same`.
+async function labRemote(env) {
+  const home = env.COPILOT_HOME;
+  const remoteHome = join(home, 'remote-home');
+  const bin = join(home, 'bin');
+  const pidFile = join(home, 'worker.pid');
+  await mkdir(bin);
+  for (const [root, result] of [[home, 'local output'], [remoteHome, 'remote output']]) {
+    const dir = join(root, 'session-state', 'same');
+    await mkdir(dir, { recursive: true });
+    const event = (type, data = {}) => JSON.stringify({ type, data, timestamp: new Date().toISOString() });
+    await writeFile(join(dir, 'events.jsonl'), [
+      event('session.start'),
+      event('tool.execution_start', { toolCallId: 'C', toolName: 'bash', arguments: { command: 'pwd' } }),
+      event('tool.execution_complete', { toolCallId: 'C', success: true, result: { content: result } }),
+    ].join('\n') + '\n');
+  }
+  await writeFile(join(bin, 'ssh'), `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${process.execPath}' '${join(HERE, 'worker.mjs')}' --home '${remoteHome}' --since 86400000\n`, { mode: 0o700 });
+  env.PATH = `${bin}:${env.PATH}`;
+  const config = join(home, 'copilot-viz.json');
+  await writeFile(config, JSON.stringify({ version: 1, remotes: [{ host: 'lab' }] }));
+  return { config, pidFile };
+}
+
+// Pairs with the server of this socket, as a page does.
+async function paired(sock) {
+  const st = await serverStatus(sock);
+  const launch = (await control(sock, 'POST', '/launch')).body.launch;
+  const code = new URL(launch).searchParams.get('code');
+  const r = await get(st.port, '/api/pair', {
+    method: 'POST', headers: { Origin: `http://127.0.0.1:${st.port}` }, body: JSON.stringify({ code }),
+  });
+  const { token } = r.json();
+  const headers = { Authorization: `Bearer ${token}` };
+  const state = async () => (await get(st.port, '/api/state', { headers })).json();
+  async function stateWhen(predicate) {
+    const until = Date.now() + 5000;
+    for (;;) {
+      const s = await state();
+      if (predicate(s)) return s;
+      if (Date.now() > until) throw new Error('Timed out waiting for the remote state.');
+      await sleep(15);
+    }
+  }
+  return { st, token, headers, state, stateWhen };
 }
 
 test('finds the owners of the client end in the socket tables', () => {
@@ -263,6 +332,7 @@ test('open keeps a server that took another port, and restarts it for other opti
   assert.equal(first.code, 0, first.stderr);
   const st = (await control(sock, 'GET', '/status')).body;
   assert.notEqual(st.port, Number(port));
+  assert.equal(st.idleExitMs, 600_000);
   assert.match(first.stdout, new RegExp(`^http://127\\.0\\.0\\.1:${st.port}/\\?code=[\\w-]+\\n$`));
 
   const again = await cli(env, 'open', '--port', port, '--no-open');
@@ -307,43 +377,9 @@ test('open asks again when the control connection closes before the reply', { ti
 
 test('a paired local viewer receives remote sessions and routes details across reconnects', { timeout: 20_000 }, async (t) => {
   const { env, sock } = await sandbox(t);
-  const home = env.COPILOT_HOME;
-  const remoteHome = join(home, 'remote-home');
-  const bin = join(home, 'bin');
-  const pidFile = join(home, 'worker.pid');
-  await mkdir(bin);
-  for (const [root, result] of [[home, 'local output'], [remoteHome, 'remote output']]) {
-    const dir = join(root, 'session-state', 'same');
-    await mkdir(dir, { recursive: true });
-    const event = (type, data = {}) => JSON.stringify({ type, data, timestamp: new Date().toISOString() });
-    await writeFile(join(dir, 'events.jsonl'), [
-      event('session.start'),
-      event('tool.execution_start', { toolCallId: 'C', toolName: 'bash', arguments: { command: 'pwd' } }),
-      event('tool.execution_complete', { toolCallId: 'C', success: true, result: { content: result } }),
-    ].join('\n') + '\n');
-  }
-  // Only this test server sees the shim; no configured or real SSH host is contacted.
-  await writeFile(join(bin, 'ssh'), `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${process.execPath}' '${join(HERE, 'worker.mjs')}' --home '${remoteHome}' --since 86400000\n`, { mode: 0o700 });
-  env.PATH = `${bin}:${env.PATH}`;
-  const config = join(home, 'copilot-viz.json');
-  await writeFile(config, JSON.stringify({ version: 1, remotes: [{ host: 'lab' }] }));
+  const { config, pidFile } = await labRemote(env);
   const server = serve(env);
-  const st = await serverStatus(sock);
-  const launch = (await control(sock, 'POST', '/launch')).body.launch;
-  const code = new URL(launch).searchParams.get('code');
-  const paired = await get(st.port, '/api/pair', {
-    method: 'POST', headers: { Origin: `http://127.0.0.1:${st.port}` }, body: JSON.stringify({ code }),
-  });
-  const headers = { Authorization: `Bearer ${paired.json().token}` };
-  async function stateWhen(predicate) {
-    const until = Date.now() + 5000;
-    for (;;) {
-      const state = (await get(st.port, '/api/state', { headers })).json();
-      if (predicate(state)) return state;
-      if (Date.now() > until) throw new Error('Timed out waiting for the remote state.');
-      await sleep(15);
-    }
-  }
+  const { st, headers, stateWhen } = await paired(sock);
   let state = await stateWhen((s) => s.ready && s.sessions.length === 2);
   assert.deepEqual(state.sessions.map((s) => s.id).sort(), ['lab/same', 'same']);
   const remote = state.sessions.find((s) => s.id === 'lab/same');
@@ -371,4 +407,60 @@ test('a paired local viewer receives remote sessions and routes details across r
   assert.equal(running(Number(await readFile(pidFile, 'utf8'))), false);
   assert.deepEqual((await control(sock, 'GET', '/status')).body.remotes, []);
   assert.equal((await cli(env, 'stop')).code, 0);
+});
+
+test('remote hosts disconnect while no page is in view, and connect again when one is', { timeout: 30_000 }, async (t) => {
+  const { env, sock } = await sandbox(t);
+  const misuse = await cli(env, 'open', '--no-open', '--pause-remotes', '0');
+  assert.equal(misuse.code, 1);
+  assert.match(misuse.stderr, /--pause-remotes works only with serve/);
+  const { pidFile } = await labRemote(env);
+  serve(env, '--pause-remotes', '0.01');
+  const { st, token, headers, state, stateWhen } = await paired(sock);
+  const lab = (s) => s.hosts.find((h) => h.id === 'ssh:lab').state;
+  const report = (viewer, visible, seq, auth = headers) => get(st.port, '/api/view', {
+    method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ viewer, visible, seq }),
+  });
+
+  // No page at all counts as none in view.
+  await stateWhen((x) => lab(x) === 'paused');
+
+  const a = await openStream(st.port, token);
+  const b = await openStream(st.port, token);
+  t.after(() => { a.close(); b.close(); });
+  assert.notEqual(a.viewer, b.viewer);
+  assert.equal((await report(a.viewer, true, 1, {})).status, 401);
+  assert.equal((await report('gone', true, 1)).status, 404);
+  assert.equal((await report(a.viewer, 'yes', 1)).status, 400);
+  assert.equal((await report(a.viewer, true, 1)).status, 200);
+  await stateWhen((x) => lab(x) === 'live' && !x.sessions.find((y) => y.id === 'lab/same').stale);
+  const worker = Number(await readFile(pidFile, 'utf8'));
+
+  // One page in view keeps SSH open.
+  await report(b.viewer, true, 1);
+  await report(a.viewer, false, 2);
+  await sleep(900);
+  assert.equal(lab(await state()), 'live');
+  await report(b.viewer, false, 2);
+  const paused = await stateWhen((x) => lab(x) === 'paused');
+  assert.equal(paused.sessions.find((x) => x.id === 'lab/same').stale, true);
+  for (const until = Date.now() + 5000; running(worker);) {
+    if (Date.now() > until) throw new Error('the paused worker kept running');
+    await sleep(15);
+  }
+  let st2 = (await control(sock, 'GET', '/status')).body;
+  assert.deepEqual([st2.clients, st2.visibleClients, st2.remotesPaused], [2, 0, true]);
+
+  // A report older than the last one of its stream does not count.
+  await report(b.viewer, true, 1);
+  await sleep(300);
+  assert.equal(lab(await state()), 'paused');
+
+  // A page in view that closes leaves none.
+  await report(b.viewer, true, 3);
+  await stateWhen((x) => lab(x) === 'live');
+  b.close();
+  await stateWhen((x) => lab(x) === 'paused');
+  st2 = (await control(sock, 'GET', '/status')).body;
+  assert.deepEqual([st2.clients, st2.visibleClients], [1, 0]);
 });

@@ -11,7 +11,7 @@ import { loadRemotes } from './remote.mjs';
 import { codeVersion, control, DEFAULT_PORT, HERE, running, runtimeDir, socketPath } from './runtime.mjs';
 
 const USAGE = `Usage: copilot-viz [open] [--port N] [--since DURATION] [--no-open]
-       copilot-viz serve [--port N] [--since DURATION] [--idle-exit MINUTES]
+       copilot-viz serve [--port N] [--since DURATION] [--idle-exit MINUTES] [--pause-remotes MINUTES]
        copilot-viz status
        copilot-viz stop
 
@@ -26,7 +26,14 @@ Shows the agents, subagents, and tool calls of Copilot CLI sessions in a browser
   --since      show the sessions whose log changed within this time, e.g. 90m, 24h, 7d
                (default 24h); running sessions are always shown
   --no-open    print the link without opening a browser
-  --idle-exit  with serve, stop after this many minutes without a viewer (default never)`;
+  --idle-exit  with serve, stop after this many minutes without a viewer (default never)
+  --pause-remotes
+               with serve, disconnect the remote hosts after this many minutes without a page
+               in view, until one is (default 10; 0 never)`;
+
+const IDLE_EXIT_MINUTES = 10;
+// setTimeout takes a delay up to 2^31 - 1 ms and runs a longer one at once.
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const say = (msg) => process.stderr.write(`copilot-viz: ${msg}\n`);
@@ -36,7 +43,7 @@ function options() {
     allowPositionals: true,
     options: {
       port: { type: 'string' }, since: { type: 'string' }, 'no-open': { type: 'boolean' },
-      'idle-exit': { type: 'string' }, help: { type: 'boolean', short: 'h' },
+      'idle-exit': { type: 'string' }, 'pause-remotes': { type: 'string' }, help: { type: 'boolean', short: 'h' },
     },
   });
   if (values.help) {
@@ -46,13 +53,20 @@ function options() {
   if (positionals.length > 1) throw new Error(`unexpected argument: ${positionals[1]}`);
   const command = positionals[0] ?? 'open';
   if (!['open', 'serve', 'status', 'stop'].includes(command)) throw new Error(`unknown command: ${command}`);
+  for (const name of ['idle-exit', 'pause-remotes']) {
+    if (command !== 'serve' && values[name] !== undefined) throw new Error(`--${name} works only with serve`);
+  }
   const port = values.port === undefined ? undefined : Number(values.port);
   if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) throw new Error(`bad --port: ${values.port}`);
   const sinceMs = values.since === undefined ? undefined : parseDuration(values.since);
   if (sinceMs === null) throw new Error(`bad --since: ${values.since}`);
   const idle = values['idle-exit'] === undefined ? 0 : Number(values['idle-exit']);
   if (!(idle >= 0)) throw new Error(`bad --idle-exit: ${values['idle-exit']}`);
-  return { command, port, sinceMs, since: values.since, noOpen: values['no-open'] ?? false, idleExitMs: idle * 60_000 };
+  const pause = values['pause-remotes'] === undefined ? 10 : Number(values['pause-remotes']);
+  if (!(pause >= 0 && pause * 60_000 <= MAX_TIMER_MS)) throw new Error(`bad --pause-remotes: ${values['pause-remotes']}`);
+  return {
+    command, port, sinceMs, since: values.since, noOpen: values['no-open'] ?? false, idleExitMs: idle * 60_000, remotePauseMs: pause * 60_000,
+  };
 }
 
 // Waits until the server of this PID left the socket and exited, so its port is free again.
@@ -71,7 +85,7 @@ function spawnServer(logPath, opt) {
   } catch {
     // No log yet.
   }
-  const args = [join(HERE, 'cli.mjs'), 'serve', '--idle-exit', '30'];
+  const args = [join(HERE, 'cli.mjs'), 'serve', '--idle-exit', String(IDLE_EXIT_MINUTES)];
   if (opt.port !== undefined) args.push('--port', String(opt.port));
   if (opt.since !== undefined) args.push('--since', opt.since);
   const fd = openSync(logPath, 'a', 0o600);
@@ -197,7 +211,9 @@ async function main() {
     case 'serve': {
       let server;
       try {
-        server = await (await import('./server.mjs')).startServer({ port: opt.port, sinceMs: opt.sinceMs, idleExitMs: opt.idleExitMs });
+        server = await (await import('./server.mjs')).startServer({
+          port: opt.port, sinceMs: opt.sinceMs, idleExitMs: opt.idleExitMs, remotePauseMs: opt.remotePauseMs,
+        });
       } catch (e) {
         if (e.code !== 'RUNNING') throw e;
         const st = (await control(sock, 'GET', '/status'))?.body;
@@ -218,8 +234,8 @@ async function main() {
       const mins = (ms) => `${Math.round(ms / 60_000)}m`;
       process.stdout.write([
         `running at ${st.url} (pid ${st.pid})${outdated}`,
-        `up ${mins(Date.now() - st.startedAt)}, ${st.sessions} sessions, ${st.clients} viewers, ${st.ready ? 'ready' : 'loading'}, ${st.errors} errors`,
-        `since ${mins(st.sinceMs)}, idle exit ${st.idleExitMs ? mins(st.idleExitMs) : 'never'}`,
+        `up ${mins(Date.now() - st.startedAt)}, ${st.sessions} sessions, ${st.clients} viewers (${st.visibleClients ?? '?'} in view), ${st.ready ? 'ready' : 'loading'}, ${st.errors} errors`,
+        `since ${mins(st.sinceMs)}, idle exit ${st.idleExitMs ? mins(st.idleExitMs) : 'never'}, remote pause ${st.remotePauseMs ? mins(st.remotePauseMs) : 'never'}`,
         ...(st.hosts ?? []).filter((h) => h.remote).map((h) => `${h.name}: ${h.state}${h.error ? ` (${h.error})` : ''}`),
       ].join('\n') + '\n');
       return undefined;

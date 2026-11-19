@@ -209,6 +209,73 @@ test('the real worker reads logs and details over SSH stdio and exits on EOF', {
   assert.equal((await exited)[0], 0, errors);
 });
 
+test('a pause closes SSH without retries, and a resume connects again while the old child still exits', async (t) => {
+  const children = [];
+  const states = [];
+  const remote = createRemote({ host: 'dev', node: 'node', script: 'worker.mjs' }, {
+    sinceMs: 1, retryMs: 5, onMessage() {}, onState: (s) => states.push(s),
+    spawnProcess: () => { const c = fakeChild(); children.push(c); return c; },
+  });
+  t.after(() => remote.stop());
+  remote.start();
+  const old = children[0];
+  old.send({ type: 'hello', protocol: PROTOCOL });
+  old.send(snapshot([]));
+  old.kill = () => true;
+  let oldClosed = false;
+  const closeOld = () => { if (!oldClosed) { oldClosed = true; old.emit('close', 0, null); } };
+  try {
+    const rejected = assert.rejects(remote.call('sid', 'call', 'epoch'), { status: 503 });
+    remote.pause();
+    await rejected;
+    assert.equal(states.at(-1), 'paused');
+    await sleep(30);
+    assert.equal(children.length, 1);
+
+    remote.resume();
+    assert.equal(children.length, 2);
+    children[1].send({ type: 'hello', protocol: PROTOCOL });
+    children[1].send(snapshot([]));
+    await sleep(10);
+  } finally {
+    // The old child ignores signals, so remote.stop() in teardown waits for this close.
+    closeOld();
+  }
+  await sleep(30);
+  assert.deepEqual(states.slice(states.indexOf('paused') + 1), ['connecting', 'loading']);
+  const reply = remote.call('sid', 'call', 'epoch');
+  children[1].send({ type: 'reply', request: 2, data: { preview: 'new' } });
+  assert.deepEqual(await reply, { preview: 'new' });
+});
+
+test('a pause cancels a pending retry, and leaves a permanent failure as it is', async (t) => {
+  const children = [];
+  const states = [];
+  const remote = createRemote({ host: 'dev', node: 'node', script: 'worker.mjs' }, {
+    sinceMs: 1, retryMs: 50, onMessage() {}, onState: (...s) => states.push(s),
+    spawnProcess: () => { const c = fakeChild(); children.push(c); return c; },
+  });
+  t.after(() => remote.stop());
+  remote.start();
+  children[0].emit('close', 255, null);
+  assert.equal(states.at(-1)[0], 'offline');
+  remote.pause();
+  assert.equal(states.at(-1)[0], 'paused');
+  await sleep(100);
+  assert.equal(children.length, 1);
+
+  remote.resume();
+  children[1].send({ type: 'hello', protocol: PROTOCOL + 1 });
+  await sleep(10);
+  const failed = states.at(-1);
+  assert.equal(failed[0], 'offline');
+  remote.pause();
+  remote.resume();
+  await sleep(30);
+  assert.equal(states.at(-1), failed);
+  assert.equal(children.length, 2);
+});
+
 test('stopping SSH escalates and waits for a TERM-resistant child', { timeout: 5000 }, async (t) => {
   let child;
   let initialized = false;

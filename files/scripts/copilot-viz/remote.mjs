@@ -45,7 +45,8 @@ export function sshArgs(config, sinceMs) {
   const command = `cd "$HOME" && exec ${args.map(quote).join(' ')}`;
   return [
     '-T', '-x', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ClearAllForwardings=yes',
-    '-o', 'RemoteCommand=none', '-o', 'ForwardAgent=no', '-o', 'ConnectTimeout=10',
+    // ControlMaster=no keeps a ControlPersist master from outliving a pause or a stop.
+    '-o', 'RemoteCommand=none', '-o', 'ForwardAgent=no', '-o', 'ControlMaster=no', '-o', 'ConnectTimeout=10',
     '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=3',
     '--', config.host, `sh -c ${quote(command)}`,
   ];
@@ -56,13 +57,16 @@ export function createRemote(config, {
 } = {}) {
   let current = null;
   let stopped = false;
+  let paused = false;
+  // A failure that a retry cannot fix, such as an incompatible worker, outlasts a pause too.
+  let terminal = false;
   let retry = null;
   let attempts = 0;
   let sequence = 0;
   const children = new Set();
 
   function connect() {
-    if (stopped) return;
+    if (stopped || paused) return;
     onState('connecting', null, null);
     const child = spawnProcess('ssh', sshArgs(config, sinceMs), { stdio: ['pipe', 'pipe', 'pipe'] });
     const a = { child, hello: false, baseline: false, pending: new Map(), stderr: '', heard: Date.now(), dead: false };
@@ -90,6 +94,11 @@ export function createRemote(config, {
       a.pending.clear();
       terminate();
       if (stopped) return;
+      if (paused) {
+        onState('paused', null, null);
+        return;
+      }
+      if (e.permanent) terminal = true;
       const delay = Math.min(30_000, retryMs * 2 ** Math.min(attempts++, 5));
       onState('offline', e.message, e.permanent ? null : Date.now() + delay);
       if (!e.permanent) retry = setTimeout(connect, delay);
@@ -165,6 +174,21 @@ export function createRemote(config, {
         a.pending.set(request, { resolve, reject, timer });
         a.child.stdin.write(encodeMessage({ type: 'call', request, sid, id, epoch }));
       });
+    },
+    // Closes SSH without retrying, until resume. The old child may still be exiting when resume
+    // starts the next one; its attempt is already dead, so it reports nothing more.
+    pause() {
+      if (stopped || paused || terminal) return;
+      paused = true;
+      clearTimeout(retry);
+      if (current && !current.dead) current.fail(new Error('Disconnected while no page was in view.'));
+      else onState('paused', null, null);
+    },
+    resume() {
+      if (stopped || !paused) return;
+      paused = false;
+      attempts = 0;
+      connect();
     },
     async stop() {
       stopped = true;

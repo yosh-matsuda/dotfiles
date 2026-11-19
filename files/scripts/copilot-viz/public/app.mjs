@@ -14,6 +14,7 @@ const THEME_KEY = 'copilot-viz-theme';
 const ZOOMS = [5, 15, 60, 360];
 const ZOOM_KEYS = new Map([['1', 5], ['2', 15], ['3', 60], ['4', 360]]);
 const REOPEN_MS = 3000;
+const REPORT_RETRY_MS = 3000;
 // Follow moves only to a session that is more urgent than the one on screen.
 const URGENCY = { attention: 0, running: 1 };
 const CONN_TEXT = {
@@ -75,6 +76,11 @@ let pairError = null;
 let source = null;
 let probing = null;
 let reopenTimer = 0;
+// The server names each stream in its first message; reports of whether the page is in view
+// go to that name.
+let viewer = null;
+let reportSeq = 0;
+let reportTimer = 0;
 let conn = 'connecting';
 let frame = 0;
 let hostOptions = '';
@@ -349,8 +355,36 @@ function hideOverlay() {
 function closeSource() {
   clearTimeout(reopenTimer);
   reopenTimer = 0;
+  clearTimeout(reportTimer);
+  reportTimer = 0;
+  viewer = null;
   source?.close();
   source = null;
+}
+
+// The server closes SSH to the remote hosts while no page is in view, so a lost report is sent
+// again, with the state of that moment.
+function reportView() {
+  clearTimeout(reportTimer);
+  reportTimer = 0;
+  const id = viewer;
+  if (!id || !token) return;
+  const seq = ++reportSeq;
+  const retry = () => {
+    if (seq === reportSeq && id === viewer) reportTimer = setTimeout(reportView, REPORT_RETRY_MS);
+  };
+  fetch('/api/view', {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ viewer: id, visible: document.visibilityState === 'visible', seq }), cache: 'no-store', keepalive: true,
+  }).then((r) => {
+    // 404: the stream closed, and the next one reports again.
+    if (r.ok || r.status === 404) return;
+    if (r.status === 401) {
+      if (source) probe(source);
+      return;
+    }
+    retry();
+  }, retry);
 }
 
 function unpaired() {
@@ -382,6 +416,10 @@ function connect() {
     // The rows of a new server's sessions differ by epoch, so they are patched, not built again.
     if (msg?.type === 'snapshot') synced = true;
     store.apply(msg);
+    if (typeof msg?.viewer === 'string' && msg.viewer !== viewer) {
+      viewer = msg.viewer;
+      reportView();
+    }
     renderTitle(counts(store.sessions.values(), store.now()).waitingSessions);
     hideOverlay();
     setConn(store.ready ? 'live' : 'loading');
@@ -480,6 +518,7 @@ for (const b of zoomButtons) b.addEventListener('click', () => setZoom(Number(b.
 el.follow.addEventListener('click', toggleFollow);
 el.theme.addEventListener('click', toggleTheme);
 darkQuery.addEventListener('change', () => applyTheme(document.documentElement.dataset.theme));
+document.addEventListener('visibilitychange', reportView);
 
 addEventListener('keydown', (e) => {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey || !el.overlay.hidden) return;

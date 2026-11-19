@@ -190,7 +190,9 @@ function readBody(req, limit) {
 
 const frame = (msg) => `data: ${JSON.stringify(msg)}\n\n`;
 
-export async function startServer({ port = DEFAULT_PORT, sinceMs = 864e5, idleExitMs = 0, log = (m) => process.stderr.write(`${m}\n`) } = {}) {
+export async function startServer({
+  port = DEFAULT_PORT, sinceMs = 864e5, idleExitMs = 0, remotePauseMs = 600_000, log = (m) => process.stderr.write(`${m}\n`),
+} = {}) {
   const remotes = await loadRemotes();
   const dir = await runtimeDir();
   const sock = socketPath(dir);
@@ -199,11 +201,17 @@ export async function startServer({ port = DEFAULT_PORT, sinceMs = 864e5, idleEx
   const uid = process.getuid?.();
   const token = randomBytes(32).toString('base64url');
   const codes = new Map();
-  // Each viewer: whether it skipped a message and so needs a snapshot, and when it last caught up.
+  // Each viewer: whether it skipped a message and so needs a snapshot, when it last caught up,
+  // and whether its page is in view, as the page last reported.
   const clients = new Map();
+  // The ID that the first message of a stream gives its page, so a report of an earlier stream
+  // of the same page does not count for this one.
+  const viewers = new Map();
   const peers = new WeakMap();
   const timers = [];
   let idleSince = startedAt;
+  let pauseTimer = null;
+  let remotesPaused = false;
   let actualPort = null;
   let ownIno = null;
   let closing = false;
@@ -220,10 +228,32 @@ export async function startServer({ port = DEFAULT_PORT, sinceMs = 864e5, idleEx
 
   const status = () => ({
     pid: process.pid, version, startedAt, requestedPort: port, port: actualPort, url: actualPort ? `http://127.0.0.1:${actualPort}/` : null,
-    ready: sources.snapshot().ready, sinceMs, idleExitMs, clients: clients.size,
+    ready: sources.snapshot().ready, sinceMs, idleExitMs, remotePauseMs, remotesPaused, clients: clients.size,
+    visibleClients: [...clients.values()].filter((c) => c.visible).length,
     sessions: sources.snapshot().sessions.length, hosts: sources.snapshot().hosts, remotes, errors,
   });
   const snapshot = () => sources.snapshot();
+
+  // SSH to the remote hosts closes once no page has been in view for remotePauseMs, and opens
+  // again as soon as one is.
+  function watchViewers() {
+    if (closing) return;
+    if ([...clients.values()].some((c) => c.visible)) {
+      clearTimeout(pauseTimer);
+      pauseTimer = null;
+      if (!remotesPaused) return;
+      remotesPaused = false;
+      log('copilot-viz: a page is in view; connecting the remote hosts');
+      sources.resume();
+    } else if (!remotesPaused && !pauseTimer && remotes.length && remotePauseMs > 0) {
+      pauseTimer = setTimeout(() => {
+        pauseTimer = null;
+        remotesPaused = true;
+        log(`copilot-viz: no page in view for ${remotePauseMs / 60_000} minutes; disconnecting the remote hosts`);
+        sources.pause();
+      }, remotePauseMs);
+    }
+  }
 
   function newCode() {
     const now = Date.now();
@@ -325,9 +355,11 @@ export async function startServer({ port = DEFAULT_PORT, sinceMs = 864e5, idleEx
     if (!sameToken(given, token)) return json(res, 401, { error: 'unauthorized' });
     res.writeHead(200, { ...HEADERS, 'Content-Type': 'text/event-stream; charset=utf-8', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     req.socket.setNoDelay(true);
-    res.write(`retry: 3000\n\n${frame(snapshot())}`);
-    const c = { stale: false, caughtUp: Date.now() };
+    // Not in view until the page says so, so that a hidden tab that reconnects does not open SSH.
+    const c = { stale: false, caughtUp: Date.now(), id: randomBytes(12).toString('base64url'), visible: false, seq: -1 };
+    res.write(`retry: 3000\n\n${frame({ ...snapshot(), viewer: c.id })}`);
     clients.set(res, c);
+    viewers.set(c.id, c);
     // A delta carries only the sessions that changed, so a viewer that skipped one needs everything.
     res.on('drain', () => {
       c.caughtUp = Date.now();
@@ -337,9 +369,34 @@ export async function startServer({ port = DEFAULT_PORT, sinceMs = 864e5, idleEx
     });
     res.on('close', () => {
       clients.delete(res);
+      viewers.delete(c.id);
       if (!clients.size) idleSince = Date.now();
+      watchViewers();
     });
+    watchViewers();
     return undefined;
+  }
+
+  // Reports may arrive out of order, so the newest by the page's count wins.
+  async function reportView(req, res) {
+    if (!bearer(req)) return json(res, 401, { error: 'unauthorized' });
+    let body;
+    try {
+      body = JSON.parse(await readBody(req, 256));
+    } catch {
+      return json(res, 400, { error: 'bad request' });
+    }
+    if (typeof body?.viewer !== 'string' || typeof body.visible !== 'boolean' || !Number.isSafeInteger(body.seq)) {
+      return json(res, 400, { error: 'bad request' });
+    }
+    const c = viewers.get(body.viewer);
+    if (!c) return json(res, 404, { error: 'no such stream' });
+    if (body.seq > c.seq) {
+      c.seq = body.seq;
+      c.visible = body.visible;
+      watchViewers();
+    }
+    return json(res, 200, { ok: true });
   }
 
   const bearer = (req) => sameToken(/^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1], token);
@@ -357,6 +414,7 @@ export async function startServer({ port = DEFAULT_PORT, sinceMs = 864e5, idleEx
       }
       if (path === '/api/pair' && req.method === 'POST') return await pair(req, res);
       if (path === '/api/stream' && req.method === 'GET') return stream(req, res, url.searchParams.get('token'));
+      if (path === '/api/view' && req.method === 'POST') return await reportView(req, res);
       if (path === '/api/state' && req.method === 'GET') {
         if (!bearer(req)) return json(res, 401, { error: 'unauthorized' });
         return json(res, 200, snapshot());
@@ -404,6 +462,7 @@ export async function startServer({ port = DEFAULT_PORT, sinceMs = 864e5, idleEx
     if (closing) return;
     closing = true;
     log(`copilot-viz: stopping: ${reason}`);
+    clearTimeout(pauseTimer);
     const stopped = sources.stop();
     for (const t of timers) clearInterval(t);
     for (const res of clients.keys()) res.end();
@@ -446,5 +505,6 @@ export async function startServer({ port = DEFAULT_PORT, sinceMs = 864e5, idleEx
 
   log(`copilot-viz: serving http://127.0.0.1:${actualPort}/ (pid ${process.pid}, control ${sock})`);
   sources.start();
+  watchViewers();
   return { port: actualPort, sock, launchUrl, shutdown };
 }
