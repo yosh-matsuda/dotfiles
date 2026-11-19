@@ -310,6 +310,7 @@ copilot-viz stop
 -   A session is live while a process named by an `inuse.<pid>.lock` in its directory runs Copilot and keeps `inuse.<pid>.hold` open. The lock stays when Copilot is killed, and the hold tells Copilot from a process that reused its PID. A session whose process ended shows the calls and shells it left running as `stopped`, because they never report their end.
 -   An auto session writes its messages and tool events only when Copilot commits the turn, and the session list marks it `auto`. Copilot logs each hook as it starts, so the calls of the turn appear while it runs, through the `preToolUse` hook that `files/copilot/settings.json` registers for every tool. Copilot CLI in a terminal has no `postToolUse` hook, so those calls show as running until the commit; the VS Code agent host registers one, which ends them earlier.
 -   Each session keeps its newest 300 tool calls and 150 feed entries.
+-   The timeline marks idle, inferred response-pending time, and waits for input or approval with a thin lane stripe; tool bars continue to show execution time.
 
 The agent lifecycle follows [agenttop](https://github.com/daknoblo/agenttop), and its MIT license is in [LICENSE.agenttop](files/scripts/copilot-viz/LICENSE.agenttop).
 

@@ -38,6 +38,9 @@ test('a sync subagent runs under its task call and ends with the task result', (
   assert.equal(agent(s, 'tc:T').current, 'V');
   assert.equal(call(s, 'V').agent, 'tc:T');
   assert.equal(call(s, 'V').summary, '~/w/a.txt');
+  assert.deepEqual(agent(s, 'tc:T').phases, [
+    { state: 'thinking', start: T0 + 4000, end: T0 + 6000 },
+  ]);
 
   feed(m, 's', [
     E(7, 'tool.execution_complete', { toolCallId: 'V', success: true, result: { content: 'abc' }, parentToolCallId: 'T' }, 'A'),
@@ -62,6 +65,48 @@ test('a sync subagent runs under its task call and ends with the task result', (
   assert.equal(s.state, 'idle');
   // The first message to the agent repeats its prompt, and its final message is its result.
   assert.deepEqual(s.feed.map((f) => f.kind), ['user', 'spawn', 'result', 'assistant']);
+});
+
+test('timeline phases distinguish idle, inferred response time, and overlapping permission waits', () => {
+  const m = createModel();
+  feed(m, 's', [
+    E(0, 'session.start'),
+    E(1, 'user.message', { content: 'inspect this' }),
+    E(2, 'assistant.turn_start'),
+    E(3, 'tool.execution_start', { toolCallId: 'V', toolName: 'view' }),
+    E(4, 'permission.requested', { requestId: 'p1', permissionRequest: { toolCallId: 'V' } }),
+    E(4.5, 'permission.requested', { requestId: 'p2', permissionRequest: { toolCallId: 'V' } }),
+    E(5, 'permission.completed', { requestId: 'p1' }),
+  ]);
+  let s = view(m, 's');
+  assert.equal(agent(s, 'main').display, 'waiting');
+  assert.deepEqual(agent(s, 'main').phases, [
+    { state: 'idle', start: T0, end: T0 + 1000 },
+    { state: 'thinking', start: T0 + 1000, end: T0 + 3000 },
+    { state: 'waiting', start: T0 + 4000, end: null },
+  ]);
+
+  feed(m, 's', [
+    E(6, 'permission.completed', { requestId: 'p2' }),
+    E(7, 'tool.execution_complete', { toolCallId: 'V' }),
+    E(8, 'assistant.turn_end'),
+    E(9, 'user.message', { content: 'choose' }),
+    E(10, 'tool.execution_start', { toolCallId: 'Q', toolName: 'ask_user' }),
+    E(12, 'tool.execution_complete', { toolCallId: 'Q' }),
+    E(13, 'session.task_complete'),
+  ]);
+  s = view(m, 's');
+  assert.deepEqual(agent(s, 'main').phases, [
+    { state: 'idle', start: T0, end: T0 + 1000 },
+    { state: 'thinking', start: T0 + 1000, end: T0 + 3000 },
+    { state: 'waiting', start: T0 + 4000, end: T0 + 6000 },
+    { state: 'thinking', start: T0 + 7000, end: T0 + 8000 },
+    { state: 'idle', start: T0 + 8000, end: T0 + 9000 },
+    { state: 'thinking', start: T0 + 9000, end: T0 + 10_000 },
+    { state: 'waiting', start: T0 + 10_000, end: T0 + 12_000 },
+    { state: 'thinking', start: T0 + 12_000, end: T0 + 13_000 },
+    { state: 'idle', start: T0 + 13_000, end: null },
+  ]);
 });
 
 test('a background agent finishes, then write_agent starts another run', () => {
@@ -134,8 +179,9 @@ test('an auto session shows live hooks, and its committed turns only add details
   assert.equal(agent(s, 'main').display, 'input');
   assert.equal(s.state, 'attention');
 
+  feed(m, 's', [E(9, 'abort', { reason: 'user_initiated' })]);
+  const phasesBeforeReplay = agent(view(m, 's'), 'main').phases;
   feed(m, 's', [
-    E(9, 'abort', { reason: 'user_initiated' }),
     E(10, 'session.fusion_commit_started', { fusionId: 'f' }),
     E(10, 'assistant.turn_start'),
     E(10, 'assistant.message', { content: '', toolRequests: [{ toolCallId: 'B', name: 'bash', intentionSummary: 'List files' }] }),
@@ -159,11 +205,13 @@ test('an auto session shows live hooks, and its committed turns only add details
   assert.notEqual(call(s, 'B').detail, detail);
   assert.equal(call(s, 'B').pending, false);
   assert.equal(call(s, 'Q').status, 'interrupted');
+  assert.deepEqual(agent(s, 'main').phases, phasesBeforeReplay);
 
   feed(m, 's', [E(20, 'session.fusion_resolved', { fusionId: 'g' })]);
   s = view(m, 's');
   assert.equal(call(s, 'X').status, 'unknown');
   assert.equal(s.calls.filter((c) => c.status === 'running').length, 0);
+  assert.deepEqual(agent(s, 'main').phases, phasesBeforeReplay);
 });
 
 test('hooks of a subagent link it to its task call before the committed turn arrives', () => {

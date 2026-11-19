@@ -1,7 +1,7 @@
-// The timeline: one lane per agent and one bar per tool call, drawn on a canvas.
+// The timeline: one lane per agent, phase stripes, and tool-call bars, drawn on a canvas.
 
 import { agentTree, isLive } from './store.mjs';
-import { ACTIVE, CATEGORIES, STATUS_LABEL, agentHue, callState, fmtClock, fmtDur, h, icon } from './ui.mjs';
+import { CATEGORIES, STATUS_LABEL, agentHue, callState, fmtClock, fmtDur, h, icon } from './ui.mjs';
 
 const LANE = 22;
 const AXIS = 22;
@@ -14,18 +14,6 @@ const MOVE_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'H
 
 function windowLabel(minutes) {
   return minutes % 60 ? `${minutes} minutes` : minutes === 60 ? 'hour' : `${minutes / 60} hours`;
-}
-
-// The span of an agent: the main agent lives as long as its session.
-function bandOf(a, s, now) {
-  if (a.kind === 'main') {
-    const start = s.meta.startedAt ?? a.startedAt;
-    if (start == null) return null;
-    return { start, end: s.meta.endedAt ?? (s.alive === false ? s.meta.lastEventAt ?? start : now) };
-  }
-  if (a.startedAt == null) return null;
-  const open = ACTIVE.has(a.display) || a.display === 'idle';
-  return { start: a.startedAt, end: a.endedAt ?? (open ? now : a.lastActivityAt ?? a.startedAt) };
 }
 
 // A call of a session whose process ended runs to the end of its log, faded.
@@ -42,9 +30,9 @@ function lanesOf(s, from, now) {
   }
   const lanes = [];
   for (const { agent, depth } of agentTree(s)) {
-    const band = bandOf(agent, s, now);
     const own = (calls.get(agent.key) ?? []).sort((x, y) => x.startedAt - y.startedAt);
-    if (own.length || (band && band.end >= from)) lanes.push({ agent, depth, band, calls: own });
+    const phases = (agent.phases ?? []).filter((p) => (p.end ?? now) >= from && p.start <= now);
+    if (own.length || phases.length) lanes.push({ agent, depth, phases, calls: own });
   }
   return lanes;
 }
@@ -152,17 +140,6 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
       ctx.fill();
       ctx.fillStyle = colors.fg2;
       ctx.fillText(fit(lane.agent.name ?? 'agent', LABEL - indent - 16), indent + 9, y + LANE / 2 + 0.5);
-      if (lane.band && lane.band.end >= from) {
-        const x0 = Math.max(LABEL, x(lane.band.start));
-        const x1 = Math.min(w - 2, x(lane.band.end));
-        if (x1 > x0) {
-          ctx.globalAlpha = colors.dark ? 0.2 : 0.16;
-          ctx.fillStyle = `hsl(${hue}, 70%, ${colors.dark ? 62 : 52}%)`;
-          box(x0, y + 5, x1 - x0, LANE - 10, 4);
-          ctx.fill();
-          ctx.globalAlpha = 1;
-        }
-      }
     });
 
     // Calls older than the kept ones are gone; hatching marks where that starts.
@@ -240,6 +217,39 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
           ctx.lineWidth = 1;
         }
         hits.push({ x0, x1, y0: y - 2, y1: y + hgt + 2, c, agent: lane.agent, lane: i });
+      }
+    });
+
+    // A narrow stripe stays visible over call bars; hatching marks inferred response time.
+    lanes.forEach((lane, i) => {
+      const y = AXIS + i * LANE + LANE - 3;
+      for (const p of lane.phases) {
+        const x0 = Math.max(LABEL, x(p.start));
+        const x1 = Math.min(endX, x(p.end ?? end));
+        if (x1 <= x0) continue;
+        const color = p.state === 'waiting' ? colors.orange
+          : p.state === 'thinking' ? colors.purple : colors.fg3;
+        ctx.fillStyle = color;
+        ctx.globalAlpha = p.state === 'idle' ? 0.72 : 0.95;
+        ctx.fillRect(x0, y, x1 - x0, 2);
+        ctx.globalAlpha = 1;
+        if (p.state === 'thinking') {
+          const shift = p.end == null ? Math.floor(now / 500) % 5 : 0;
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(x0, y, x1 - x0, 2);
+          ctx.clip();
+          ctx.strokeStyle = colors.panel;
+          ctx.globalAlpha = 0.8;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (let k = x0 - 4 + shift; k < x1; k += 5) {
+            ctx.moveTo(k, y + 2);
+            ctx.lineTo(k + 2, y);
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
       }
     });
 

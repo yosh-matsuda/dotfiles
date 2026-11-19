@@ -2,7 +2,7 @@
 // shells and an activity feed. The agent lifecycle follows agenttop (see LICENSE.agenttop).
 // The module is pure: the monitor feeds it events and the server drains changed sessions.
 
-export const LIMITS = Object.freeze({ calls: 300, feed: 150, shells: 60, activityMinutes: 360 });
+export const LIMITS = Object.freeze({ calls: 300, feed: 150, shells: 60, phases: 300, activityMinutes: 360 });
 
 // Only these types are parsed; the monitor skips every other line before JSON.parse.
 export const HANDLED_TYPES = new Set([
@@ -79,7 +79,7 @@ function newAgent(key, init) {
     lastMessage: null, lastMessageAt: null, result: null, error: null, tokens: { input: 0, output: 0, cacheRead: 0 },
     reportedTokens: null, toolCount: 0, reportedToolCalls: null, durationMs: null, turns: 0,
     compacting: false, placeholder: false, waiting: false, lastMsgHadTools: false, argsSeen: false,
-    promptSeen: false, resultFed: false,
+    promptSeen: false, resultFed: false, phases: [],
     ...init,
   };
 }
@@ -107,6 +107,51 @@ function shortPath(path, home) {
 
 function touch(a, ts) {
   if (a && ts != null && (a.lastActivityAt == null || ts > a.lastActivityAt)) a.lastActivityAt = ts;
+}
+
+function setPhase(a, state, ts) {
+  if (!a || ts == null) return;
+  const last = a.phases.at(-1);
+  if (last && last.end == null && last.state === state) return;
+  if (last && last.end == null && ts < last.start) return;
+  if (last && last.end != null && ts < last.end) return;
+  if (last && last.end == null) {
+    if (ts === last.start) a.phases.pop();
+    else last.end = ts;
+  }
+  if (!state) return;
+  const previous = a.phases.at(-1);
+  if (previous?.state === state && previous.end === ts) previous.end = null;
+  else a.phases.push({ state, start: ts, end: null });
+  if (a.phases.length > LIMITS.phases) a.phases.splice(0, a.phases.length - LIMITS.phases);
+}
+
+function syncPhase(S, a, ts) {
+  if (!a) return;
+  const calls = [...S.calls.values()].filter((c) => c.agent === a.key && c.status === 'running');
+  const waiting = a.waiting || calls.some((c) => c.perm || c.category === 'ask')
+    || [...S.perms.values()].some((p) => p.agent === a.key
+      && (p.call == null || S.calls.get(p.call)?.status === 'running'));
+  setPhase(a, waiting ? 'waiting' : calls.length ? null : a.status === 'running' ? 'thinking'
+    : a.status === 'idle' ? 'idle' : null, ts);
+}
+
+function mergePhases(a, b) {
+  const intervals = [...a.phases, ...b.phases];
+  const points = [...new Set(intervals.flatMap((p) => p.end == null ? [p.start] : [p.start, p.end]))]
+    .sort((x, y) => x - y);
+  const merged = [];
+  for (let i = 0; i < points.length; i++) {
+    const start = points[i];
+    const end = points[i + 1] ?? null;
+    const candidates = intervals.filter((p) => p.start <= start && (p.end == null || p.end > start));
+    const current = candidates.reduce((best, p) => (!best || p.start >= best.start ? p : best), null);
+    if (!current) continue;
+    const last = merged.at(-1);
+    if (last?.state === current.state && last.end === start) last.end = end;
+    else merged.push({ state: current.state, start, end });
+  }
+  a.phases = merged.slice(-LIMITS.phases);
 }
 
 // New work from an agent: a turn, a tool, or a message to it.
@@ -209,6 +254,7 @@ function link(S, agentId, toolCallId, ts) {
 }
 
 function merge(S, t, p) {
+  mergePhases(t, p);
   t.startedAt = minOf(t.startedAt, p.startedAt);
   t.lastActivityAt = maxOf(t.lastActivityAt, p.lastActivityAt);
   for (const k of ['input', 'output', 'cacheRead']) t.tokens[k] += p.tokens[k];
@@ -383,6 +429,7 @@ function resetInflight(S, ts, mainStatus) {
   S.shellEnds.clear();
   for (const c of S.calls.values()) if (c.status === 'running') endCall(c, ts, { source: 'inferred', status: 'interrupted' });
   for (const a of S.agents.values()) {
+    setPhase(a, null, ts);
     a.compacting = false;
     a.waiting = false;
     if (a.kind === 'main') settle(a, mainStatus, ts);
@@ -521,6 +568,7 @@ function onStart(S, d, ts, resume) {
   m.startedAt = m.startedAt ?? parseTime(d.startTime) ?? ts;
   m.endedAt = null;
   settle(S.agents.get('main'), 'idle', ts);
+  setPhase(S.agents.get('main'), 'idle', ts);
   if (resume) pushFeed(S, ts, 'main', 'notice', 'Session resumed');
 }
 
@@ -536,6 +584,7 @@ function onHook(S, ev, ts, home) {
         if (c.status !== 'running') continue;
         wake(owner, ts);
         if (c.name === 'task') onTaskStart(S, c, tc.args, owner, ts);
+        syncPhase(S, owner, ts);
       }
       break;
     }
@@ -550,6 +599,7 @@ function onHook(S, ev, ts, home) {
         source: 'hook', status: failed ? 'failed' : 'ok', error: typeof err === 'string' ? err : obj(err).message,
       });
       touch(owner, ts);
+      syncPhase(S, owner, ts);
       const task = c.name === 'task' && failed ? S.agents.get(`tc:${c.id}`) : undefined;
       if (task && (task.status === 'starting' || task.status === 'orphan')) {
         settle(task, 'failed', ts);
@@ -570,13 +620,15 @@ function onHook(S, ev, ts, home) {
       const known = knownAgent(S, input.agentId);
       if (known) {
         wake(known, ts);
+        syncPhase(S, known, ts);
         break;
       }
-      byAgentId(S, input.agentId, ts, {
+      const a = byAgentId(S, input.agentId, ts, {
         parent: knownAgent(S, input.parentAgentId)?.key ?? 'main',
         type: oneLine(input.agentType, 60),
         name: oneLine(input.agentName, 80),
       });
+      syncPhase(S, a, ts);
       break;
     }
     case 'subagentStop': {
@@ -592,6 +644,7 @@ function onHook(S, ev, ts, home) {
       // A sync agent ends with the task result; a background one ends here.
       if (a.mode !== 'sync' && a.status === 'running') settle(a, a.resumable ? 'idle' : 'done', ts);
       touch(a, ts);
+      syncPhase(S, a, ts);
       break;
     }
     case 'agentStop':
@@ -599,12 +652,14 @@ function onHook(S, ev, ts, home) {
         const main = S.agents.get('main');
         if (main.status === 'running') settle(main, 'idle', ts);
         closeDangling(S, 'main', ts, 'unknown');
+        syncPhase(S, main, ts);
       }
       break;
     case 'userPromptSubmitted':
       if (!ev.agentId) {
         endReplay(S, ts);
         wake(S.agents.get('main'), ts);
+        syncPhase(S, S.agents.get('main'), ts);
       }
       break;
     case 'errorOccurred': {
@@ -674,10 +729,14 @@ function handle(S, ev, home) {
     case 'session.error':
       S.meta.errors++;
       if (main.status === 'running') settle(main, 'failed', ts);
+      syncPhase(S, main, ts);
       main.error = oneLine(d.message, TEXT.error);
       pushFeed(S, ts, 'main', 'error', oneLine(d.message, TEXT.feed));
       break;
-    case 'session.task_complete': settle(main, d.success === false ? 'failed' : 'idle', ts); break;
+    case 'session.task_complete':
+      settle(main, d.success === false ? 'failed' : 'idle', ts);
+      syncPhase(S, main, ts);
+      break;
     case 'session.fusion_resolved':
       S.meta.batched = true;
       endReplay(S, ts);
@@ -689,6 +748,7 @@ function handle(S, ev, home) {
     case 'session.fusion_completed': endReplay(S, ts); break;
     case 'abort':
       settle(main, 'cancelled', ts);
+      for (const a of S.agents.values()) setPhase(a, null, ts);
       closeDangling(S, 'main', ts, 'interrupted');
       for (const a of S.agents.values()) {
         if (a.kind === 'sub' && a.mode === 'sync' && (a.status === 'running' || a.status === 'starting')) settle(a, 'cancelled', ts);
@@ -704,12 +764,14 @@ function handle(S, ev, home) {
         a.promptSeen = true;
         a.prompt = a.prompt ?? clip(text, TEXT.prompt);
         wake(a, ts);
+        syncPhase(S, a, ts);
         if (!repeat) pushFeed(S, ts, a.key, 'handoff', clip(text, TEXT.feed));
       } else {
         endReplay(S, ts);
         S.meta.title = S.meta.title ?? oneLine(text, 200);
         S.meta.lastPrompt = clip(text, TEXT.prompt);
         wake(main, ts);
+        syncPhase(S, main, ts);
         pushFeed(S, ts, 'main', 'user', clip(text, TEXT.feed));
       }
       break;
@@ -717,7 +779,10 @@ function handle(S, ev, home) {
     case 'assistant.turn_start': {
       const a = ownerOf(S, ev, d, ts);
       a.turns++;
-      if (live) wake(a, ts);
+      if (live) {
+        wake(a, ts);
+        syncPhase(S, a, ts);
+      }
       break;
     }
     case 'assistant.message': {
@@ -754,6 +819,7 @@ function handle(S, ev, home) {
         settle(a, 'idle', ts);
         closeDangling(S, 'main', ts, 'unknown');
       }
+      if (live) syncPhase(S, a, ts);
       break;
     }
     case 'tool.execution_start': {
@@ -765,6 +831,7 @@ function handle(S, ev, home) {
       if (c.status === 'running') {
         if (live) wake(owner, ts);
         if (c.name === 'task') onTaskStart(S, c, d.arguments, owner, ts);
+        if (live) syncPhase(S, owner, ts);
       }
       break;
     }
@@ -780,6 +847,7 @@ function handle(S, ev, home) {
       });
       touch(S.agents.get(c.agent), ts);
       afterComplete(S, c, text, success, ts, live);
+      if (live) syncPhase(S, S.agents.get(c.agent), ts);
       break;
     }
     case 'subagent.started': {
@@ -792,6 +860,7 @@ function handle(S, ev, home) {
       a.resumable = Boolean(d.resumable);
       a.placeholder = false;
       wake(a, ts);
+      syncPhase(S, a, ts);
       break;
     }
     case 'subagent.configured': {
@@ -809,11 +878,13 @@ function handle(S, ev, home) {
       if (d.cancelled) settle(a, 'cancelled', ts);
       else if (a.mode === 'background' && a.resumable) settle(a, 'idle', ts);
       else settle(a, 'done', ts);
+      syncPhase(S, a, ts);
       break;
     }
     case 'subagent.failed': {
       const a = d.toolCallId ? link(S, ev.agentId, d.toolCallId, ts) : byAgentId(S, ev.agentId, ts);
       settle(a, 'failed', ts);
+      syncPhase(S, a, ts);
       a.error = oneLine(typeof d.error === 'string' ? d.error : obj(d.error).message, TEXT.error) ?? a.error;
       pushFeed(S, ts, a.key, 'error', a.error ?? 'Agent failed');
       break;
@@ -827,6 +898,7 @@ function handle(S, ev, home) {
         // Only a resumable agent keeps waiting for messages; write_agent can still wake a done one.
         else if (a && !TERMINAL.has(a.status)) next = a.resumable ? 'idle' : 'done';
         if (next) settle(a, next, ts);
+        if (next) syncPhase(S, a, ts);
         const who = k.displayName ?? (a ? agentLabel(a) : 'agent');
         if (!a?.resultFed) pushFeed(S, ts, a?.key ?? 'main', 'agent', oneLine(`${who} finished`, TEXT.feed));
       } else if (k.type === 'shell_completed' || k.type === 'shell_detached_completed') {
@@ -838,7 +910,10 @@ function handle(S, ev, home) {
       } else {
         const m = NOTICE_DONE_RE.exec(typeof d.content === 'string' ? d.content : '');
         const a = m && knownAgent(S, m[1]);
-        if (a) settle(a, m[2] === 'failed' ? 'failed' : 'done', ts);
+        if (a) {
+          settle(a, m[2] === 'failed' ? 'failed' : 'done', ts);
+          syncPhase(S, a, ts);
+        }
       }
       break;
     }
@@ -849,16 +924,20 @@ function handle(S, ev, home) {
       const a = c ? S.agents.get(c.agent) : byAgentId(S, ev.agentId, ts);
       if (!c && a) a.waiting = true;
       if (d.requestId) S.perms.set(d.requestId, { call: c?.id ?? null, agent: a?.key ?? null });
+      syncPhase(S, a, ts);
       break;
     }
     case 'permission.completed': {
       const p = d.requestId ? S.perms.get(d.requestId) : undefined;
       if (!p) break;
       const c = p.call ? S.calls.get(p.call) : undefined;
-      if (c) c.perm = false;
+      if (c) c.perm = [...S.perms.values()].some((other) => other !== p && other.call === c.id);
       const a = p.agent ? S.agents.get(p.agent) : undefined;
-      if (a) a.waiting = false;
       S.perms.delete(d.requestId);
+      if (a) {
+        a.waiting = [...S.perms.values()].some((other) => other.agent === a.key && other.call == null);
+        syncPhase(S, a, ts);
+      }
       break;
     }
     case 'skill.invoked': {
@@ -906,6 +985,7 @@ function serialize(S) {
       key: a.key, parent: a.parent, kind: a.kind, agentId: a.agentId, name: agentLabel(a), type: a.type,
       description: a.description, mode: a.mode, model: a.model, effort: a.effort, status: a.status, display,
       startedAt: a.startedAt, endedAt: a.endedAt, lastActivityAt: a.lastActivityAt, prompt: a.prompt,
+      phases: a.phases.map((p) => ({ ...p })),
       lastMessage: a.lastMessage, lastMessageAt: a.lastMessageAt, result: a.result, error: a.error,
       tokens: { ...a.tokens }, reportedTokens: a.reportedTokens, toolCount: Math.max(a.toolCount, a.reportedToolCalls ?? 0),
       durationMs: a.durationMs, turns: a.turns, compacting: a.compacting, placeholder: a.placeholder,

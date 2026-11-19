@@ -521,7 +521,12 @@ addEventListener('storage', (e) => {
 // --- start ------------------------------------------------------------------------------
 
 $('detail-close').replaceChildren(icon('close'));
-$('legend').replaceChildren(...CATEGORIES.map((c) => h('span', { 'data-cat': c, text: CATEGORY_LABEL[c] })));
+$('legend').replaceChildren(
+  ...CATEGORIES.map((c) => h('span', { 'data-cat': c, text: CATEGORY_LABEL[c] })),
+  h('span', { 'data-phase': 'idle', text: 'Idle' }),
+  h('span', { 'data-phase': 'thinking', text: 'Response pending (inferred)' }),
+  h('span', { 'data-phase': 'waiting', text: 'Waiting for input or approval' }),
+);
 applyTheme(load(THEME_KEY));
 const pinned = hashId();
 if (pinned) {
