@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, writeFile, appendFile, rename, truncate, rm, utimes } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createMonitor, isCopilotArgv, parseWorkspaceYaml } from './monitor.mjs';
+import { createMonitor, isCopilotArgv, parseWorkspaceYaml, shellProcs } from './monitor.mjs';
 
 function fakeModel() {
   const m = { events: [], resets: 0, meta: {} };
@@ -166,4 +168,20 @@ test('reads the names that Copilot writes to workspace.yaml', () => {
   assert.equal(y.summary, "it's: quoted");
   assert.equal(y.cwd, '/home/u/w');
   assert.equal(y.user_named, 'false');
+});
+
+test('shellProcs lists the children that lead their own session', { skip: !existsSync(`/proc/self/task/${process.pid}/children`) }, async (t) => {
+  const shell = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+  const tool = spawn('sleep', ['31'], { stdio: 'ignore' });
+  t.after(() => {
+    shell.kill();
+    tool.kill();
+  });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const procs = await shellProcs(process.pid);
+  const p = procs.find((x) => x.pid === shell.pid);
+  assert.deepEqual(p.argv, ['sleep', '30']);
+  assert.ok(Math.abs(p.start - Date.now()) < 5000, `starts at ${new Date(p.start).toISOString()}`);
+  assert.ok(Number.isInteger(p.ticks));
+  assert.equal(procs.some((x) => x.pid === tool.pid), false);
 });

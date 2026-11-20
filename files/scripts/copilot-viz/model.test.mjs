@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createModel, LIMITS } from './model.mjs';
-import { createStore } from './public/store.mjs';
+import { createStore, isDormant } from './public/store.mjs';
 
 const T0 = Date.parse('2026-01-01T00:00:00Z');
 const at = (sec) => new Date(T0 + sec * 1000).toISOString();
@@ -192,6 +192,32 @@ test('an agent whose end only a tool result reports leaves the inferred response
   assert.deepEqual(agent(s, 'tc:S').phases, [{ state: 'thinking', start: T0 + 8000, end: T0 + 9000 }]);
 });
 
+test('an idle subagent sleeps an hour after it went idle, even when a read of it comes later', () => {
+  const m = createModel();
+  const min = (n) => n * 60;
+  feed(m, 's', [
+    E(0, 'session.start'),
+    E(1, 'user.message', { content: 'review' }),
+    E(2, 'tool.execution_start', { toolCallId: 'T', toolName: 'task', arguments: { agent_type: 'code-review', name: 'r1', mode: 'background', prompt: 'Look' } }),
+    E(2, 'subagent.started', { toolCallId: 'T', agentType: 'code-review', executionMode: 'background', resumable: true }, A),
+    E(3, 'tool.execution_complete', { toolCallId: 'T', success: true, result: { content: `Agent started in background with agent_id: ${A}.` } }),
+    E(5, 'assistant.turn_end', { parentToolCallId: 'T' }, A),
+    E(6, 'tool.execution_start', { toolCallId: 'R1', toolName: 'read_agent', arguments: { agent_id: A } }),
+    E(6, 'tool.execution_complete', { toolCallId: 'R1', success: true, result: { content: `agent_id: ${A}, agent_type: code-review, status: idle, elapsed: 4s` } }),
+    E(min(50), 'tool.execution_start', { toolCallId: 'R2', toolName: 'read_agent', arguments: { agent_id: A } }),
+    E(min(50), 'tool.execution_complete', { toolCallId: 'R2', success: true, result: { content: `agent_id: ${A}, agent_type: code-review, status: idle, elapsed: 50m` } }),
+  ]);
+  const a = () => agent(view(m, 's'), 'tc:T');
+  assert.equal(a().display, 'idle');
+  assert.equal(isDormant(a(), T0 + min(59) * 1000), false);
+  assert.equal(isDormant(a(), T0 + min(61) * 1000), true);
+  feed(m, 's', [
+    E(min(62), 'tool.execution_start', { toolCallId: 'W', toolName: 'write_agent', arguments: { agent_id: A, message: 'More?' } }),
+    E(min(62), 'tool.execution_complete', { toolCallId: 'W', success: true, result: { content: `Message delivered to agent ${A}.` } }),
+  ]);
+  assert.equal(isDormant(a(), T0 + min(63) * 1000), false);
+});
+
 test('an auto session shows live hooks, and its committed turns only add details', () => {
   const m = createModel();
   feed(m, 's', [
@@ -347,6 +373,117 @@ test('background shells end on the notice even when it comes before the start', 
     E(9, 'tool.execution_complete', { toolCallId: 'C', success: true, result: { content: '<command started in background with shellId: 8>' } }),
   ]);
   assert.equal(view(m, 's').shells.find((x) => x.id === '8').status, 'done');
+});
+
+test('a shellId given again starts a new shell that an older end does not end', () => {
+  const m = createModel();
+  const start = (sec, id, command, shellId) => [
+    E(sec, 'tool.execution_start', { toolCallId: id, toolName: 'bash', arguments: { command, mode: 'async', shellId } }),
+    E(sec, 'tool.execution_complete', { toolCallId: id, success: true, result: { content: `<command started in background with shellId: ${shellId}>` } }),
+  ];
+  feed(m, 's', [
+    E(0, 'session.start'),
+    ...start(1, 'B1', 'make', 'gcc'),
+    E(5, 'tool.execution_start', { toolCallId: 'R', toolName: 'read_bash', arguments: { shellId: 'gcc' } }),
+    E(5, 'tool.execution_complete', { toolCallId: 'R', success: true, result: { content: 'ok\n<shellId: gcc completed with exit code 0>' } }),
+    E(6, 'system.notification', { kind: { type: 'shell_completed', shellId: 'x', exitCode: 0 } }),
+    ...start(9, 'B2', 'make test', 'gcc'),
+    ...start(9, 'B3', 'serve', 'x'),
+  ]);
+  assert.deepEqual(view(m, 's').shells.map((x) => [x.id, x.status, x.command]), [['gcc', 'running', 'make test'], ['x', 'running', 'serve']]);
+
+  // The footer of a sync call ends its own shell, which a later shell with the id must not inherit.
+  feed(m, 'v', [
+    E(0, 'session.start'), E(1, 'session.fusion_resolved'),
+    E(2, 'tool.execution_start', { toolCallId: 'S', toolName: 'bash', arguments: { command: 'rm -f app.pid', shellId: 'srv' } }),
+    E(2, 'tool.execution_complete', { toolCallId: 'S', success: true, result: { content: '<shellId: srv completed with exit code 0>' } }),
+    E(9, 'session.fusion_commit_started'),
+    ...start(9, 'B4', 'npm run dev', 'srv'),
+  ]);
+  assert.deepEqual(view(m, 'v').shells.map((x) => [x.id, x.status]), [['srv', 'running']]);
+});
+
+test('the processes of Copilot end the shells that the log never ends', () => {
+  const m = createModel();
+  const start = (sec, id, command, shellId) => [
+    E(sec, 'tool.execution_start', { toolCallId: id, toolName: 'bash', arguments: { command, mode: 'async', shellId } }, 'A'),
+    E(sec, 'tool.execution_complete', { toolCallId: id, success: true, result: { content: `<command started in background with shellId: ${shellId}>` } }, 'A'),
+  ];
+  // bash keeps its arguments for a pipeline and execs a single command. Copilot may drop the
+  // leading cd of a command.
+  const P = (pid, sec, ...argv) => ({ pid, ticks: pid * 10, start: T0 + sec * 1000, argv });
+  const pipe = P(101, 10.2, '/bin/bash', '--norc', '--noprofile', '-c', 'make 2>&1 | tail');
+  const sleep = P(102, 12.4, 'sleep', '30');
+  const shells = (sid = 's') => Object.fromEntries(view(m, sid).shells.map((x) => [x.id, [x.status, x.exitCode, x.endedAt]]));
+  const check = (procs, sec, sid = 's') => m.checkShells(sid, procs, T0 + sec * 1000);
+  feed(m, 's', [E(0, 'session.start'), ...start(10, 'B1', 'cd "/w x" && make 2>&1 | tail', 'a'), ...start(12, 'B2', 'sleep 30', 'b'), ...start(14, 'B3', 'cd x && ./run', 'c')]);
+
+  check([], 20);
+  check([], 21);
+  assert.equal(shells().c[0], 'running', 'no process has shown how Copilot runs its shells');
+  check([pipe, sleep], 22);
+  assert.equal(shells().c[0], 'running', '/proc can skip a child once');
+  check([pipe, sleep], 23);
+  assert.deepEqual(shells(), { a: ['running', null, null], b: ['running', null, null], c: ['done', null, null] });
+
+  check([pipe], 30);
+  check([pipe], 31);
+  assert.deepEqual(shells().b, ['done', null, T0 + 30_000]);
+  feed(m, 's', [E(32, 'system.notification', { kind: { type: 'shell_completed', shellId: 'b', exitCode: 2 } })]);
+  assert.deepEqual(shells().b, ['done', 2, T0 + 30_000]);
+
+  // A shell whose command left work in the background still runs without its process.
+  feed(m, 's', [
+    E(40, 'tool.execution_start', { toolCallId: 'R', toolName: 'read_bash', arguments: { shellId: 'c' } }, 'A'),
+    E(40, 'tool.execution_complete', { toolCallId: 'R', success: true, result: { content: '<command with shellId: c is still running after 10 seconds>' } }, 'A'),
+  ]);
+  check([], 50);
+  check([pipe], 51);
+  check([], 60);
+  check([], 61);
+  assert.deepEqual(shells(), { a: ['done', null, T0 + 60_000], b: ['done', 2, T0 + 30_000], c: ['running', null, null] });
+
+  // The processes of one session show how Copilot runs the shells of all sessions on the host.
+  feed(m, 't', [E(0, 'session.start'), ...start(70, 'B4', 'sleep 5', 'd')]);
+  check([], 80, 't');
+  check([], 81, 't');
+  assert.deepEqual(shells('t').d, ['done', null, null]);
+});
+
+test('a committed auto turn matches its shells to processes only by command, and sessions share no process', () => {
+  const m = createModel();
+  const start = (sec, id, command, shellId, agentId) => [
+    E(sec, 'tool.execution_start', { toolCallId: id, toolName: 'bash', arguments: { command, mode: 'async', shellId } }, agentId),
+    E(sec, 'tool.execution_complete', { toolCallId: id, success: true, result: { content: `<command started in background with shellId: ${shellId}>` } }, agentId),
+  ];
+  // The shells of the main agent appear when its turn commits at 20 s. A subagent logs its own
+  // tool calls live. bash execs a single command, whose words a quote no longer shows.
+  feed(m, 's', [
+    E(0, 'session.start'), E(1, 'session.fusion_resolved'),
+    E(20, 'session.fusion_commit_started'), ...start(20, 'B1', 'make | tail', 'a'), ...start(20, 'B2', 'python3 "srv.py"', 'b'),
+    ...start(20, 'B5', 'sleep 30', 'd'), E(20, 'session.fusion_completed'),
+    ...start(25, 'B4', 'pytest "-q"', 'c', 'A'),
+  ]);
+  feed(m, 'u', [E(0, 'session.start'), ...start(10, 'B3', 'sleep 40', 'e')]);
+  const pipe = { pid: 101, ticks: 1, start: T0 + 10_000, argv: ['bash', '-c', 'make | tail'] };
+  const srv = { pid: 102, ticks: 2, start: T0 + 5_000, argv: ['python3', 'srv.py'] };
+  const test = { pid: 103, ticks: 3, start: T0 + 25_100, argv: ['pytest', '-q'] };
+  const sleep = { pid: 104, ticks: 4, start: T0 + 6_000, argv: ['sleep', '30'] };
+  const check = (procs, sec) => {
+    m.checkShells('s', procs, T0 + sec * 1000);
+    m.checkShells('u', procs, T0 + sec * 1000);
+  };
+  const shells = (sid) => view(m, sid).shells.map((x) => [x.id, x.status, x.endedAt]);
+  check([pipe, srv, test, sleep], 30);
+  check([pipe, srv, test, sleep], 31);
+  assert.deepEqual(shells('s'), [['a', 'running', null], ['b', 'running', null], ['d', 'running', null], ['c', 'running', null]]);
+  assert.deepEqual(shells('u'), [['e', 'done', null]]);
+  check([pipe, srv], 40);
+  check([pipe, srv], 41);
+  assert.deepEqual(shells('s'), [['a', 'running', null], ['b', 'running', null], ['d', 'done', T0 + 40_000], ['c', 'done', T0 + 40_000]]);
+  check([pipe], 50);
+  check([pipe], 51);
+  assert.deepEqual(shells('s'), [['a', 'running', null], ['b', 'done', null], ['d', 'done', T0 + 40_000], ['c', 'done', T0 + 40_000]]);
 });
 
 test('a rebuilt session gets a new epoch, and a restarted model uses other epochs', () => {

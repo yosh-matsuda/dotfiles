@@ -2,6 +2,10 @@
 
 export const QUIET_MS = 5 * 60_000;
 const LIVE_MS = 30 * 60_000;
+// write_agent woke 90% of the idle agents within an hour. A subagent idle longer folds into a
+// chip on the map and its idle stripe ends on the timeline; it unfolds when it runs again. The
+// map also drops the shells that ended this long ago.
+export const DORMANT_MS = 60 * 60_000;
 
 export function createStore() {
   const sessions = new Map();
@@ -48,6 +52,23 @@ export function isLive(s, now) {
   if (typeof s.alive === 'boolean') return s.alive;
   if (s.state === 'running' || s.state === 'attention') return true;
   return s.meta.lastEventAt != null && now - s.meta.lastEventAt < LIVE_MS;
+}
+
+// The time a session is shown at: an ended session shows its own last minutes.
+export function viewEnd(s, now) {
+  return isLive(s, now) || s.stale ? now : Math.min(now, s.meta.lastEventAt ?? now);
+}
+
+// When an idle agent went idle; a read of its status later does not count.
+export function idleSince(agent) {
+  const p = agent.phases?.at(-1);
+  return p?.state === 'idle' && p.end == null ? p.start : agent.lastActivityAt;
+}
+
+export function isDormant(agent, at) {
+  if (agent.kind === 'main' || agent.display !== 'idle') return false;
+  const since = idleSince(agent);
+  return since != null && at - since > DORMANT_MS;
 }
 
 export function sessionNow(s, now) {

@@ -21,6 +21,9 @@ const SCRIPT_RUNNER = /^(?:node|nodejs|bun|deno)(?:\.exe)?$/;
 // ps joins the arguments with spaces, and a path may hold spaces too.
 const COPILOT_ARGS = /(?:^|[\\/])copilot(?:-runtime)?(?:\s|$)|[\\/]@github[\\/]copilot[\\/]/;
 const HAS_PROC = existsSync('/proc/self/cmdline');
+const HAS_CHILDREN = existsSync(`/proc/self/task/${process.pid}/children`);
+// USER_HZ, the unit of the start times in /proc; Linux reports 100 on every architecture.
+const CLOCK_TICKS = 100;
 
 export function copilotHome(env = process.env) {
   return env.COPILOT_HOME || join(homedir(), '.copilot');
@@ -72,6 +75,38 @@ async function runsCopilot(pid, dir) {
       else resolve(COPILOT_ARGS.test(out.trim()));
     });
   });
+}
+
+// The processes that may be shells of the Copilot process `pid`, with their start times; null
+// where /proc cannot list them. Copilot starts each shell in a session of its own, while rg and
+// git of its tools stay in its session. Each thread of a process lists the children it forked.
+export async function shellProcs(pid) {
+  if (!HAS_CHILDREN) return null;
+  const tasks = await readdir(`/proc/${pid}/task`).catch(() => null);
+  if (!tasks) return null;
+  const kids = new Set();
+  for (const t of tasks) {
+    const text = await readFile(`/proc/${pid}/task/${t}/children`, 'utf8').catch(() => '');
+    for (const k of text.split(' ')) if (/^\d+$/.test(k)) kids.add(Number(k));
+  }
+  const btime = Number(/^btime (\d+)$/m.exec(await readFile('/proc/stat', 'utf8').catch(() => ''))?.[1]);
+  if (!btime) return null;
+  const out = [];
+  for (const k of kids) {
+    try {
+      const stat = await readFile(`/proc/${k}/stat`, 'utf8');
+      // The fields after the name in parentheses start at the third: the session is the 6th and
+      // starttime the 22nd.
+      const f = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+      if (Number(f[3]) !== k) continue;
+      const ticks = Number(f[19]);
+      const argv = (await readFile(`/proc/${k}/cmdline`, 'utf8')).split('\0').filter(Boolean);
+      if (Number.isFinite(ticks) && argv.length) out.push({ pid: k, ticks, start: btime * 1000 + ticks * (1000 / CLOCK_TICKS), argv });
+    } catch {
+      // The process ended meanwhile.
+    }
+  }
+  return out;
 }
 
 // "90m", "24h", "7d"; a bare number means hours.
@@ -170,7 +205,10 @@ export function createMonitor({
     let alive = false;
     for (const pid of c.pids) {
       const v = await runsCopilot(pid, dir);
-      if (v === true) return true;
+      if (v === true) {
+        c.pid = pid;
+        return true;
+      }
       if (v === null) alive = null;
     }
     return alive;
@@ -204,6 +242,8 @@ export function createMonitor({
       entries = [];
     }
     const keep = new Set();
+    // One Copilot process can run several sessions; its children are read once per pass.
+    const procsOf = new Map();
     for (const ent of entries) {
       if (stopped) return;
       if (!ent.isDirectory() || ent.name.startsWith('.')) continue;
@@ -228,6 +268,13 @@ export function createMonitor({
       keep.add(sid);
       model.setMeta(sid, { alive });
       await readWorkspace(tr);
+      // The shells of a log that is still being read may have ended in the part not read yet.
+      const pid = alive === true ? locks.get(sid)?.pid : null;
+      if (pid != null && !tr.busy && tr.pos >= st.size && model.wantsShellCheck(sid)) {
+        if (!procsOf.has(pid)) procsOf.set(pid, await shellProcs(pid));
+        const procs = procsOf.get(pid);
+        if (procs) model.checkShells(sid, procs, now());
+      }
     }
     for (const [sid, tr] of trackers) {
       if (keep.has(sid)) continue;

@@ -2,14 +2,16 @@
 // launched it. Agents at work get a card; finished ones shrink to a chip.
 
 import { clientName } from './sessions.mjs';
-import { agentTree, isQuiet, sessionTitle } from './store.mjs';
+import { DORMANT_MS, agentTree, idleSince, isDormant, isQuiet, sessionTitle, viewEnd } from './store.mjs';
 import { ACTIVE, STATUS_LABEL, TERMINAL, fmtAgo, fmtDur, fmtTokens, h, icon, initials, move, restore, setData, setHue, setText, succeed, svgEl } from './ui.mjs';
 
 const CHIP_LIMIT = 14;
 const ENDED_SHELLS = 6;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
-const isChip = (a) => a.kind !== 'main' && (TERMINAL.has(a.display) || a.display === 'orphan');
+// `at`: the time the session is shown at, which dormancy counts to.
+const isChip = (a, at) => a.kind !== 'main' && (TERMINAL.has(a.display) || a.display === 'orphan' || isDormant(a, at));
+const chipSince = (a) => a.endedAt ?? (a.display === 'idle' ? idleSince(a) : null) ?? a.startedAt ?? 0;
 
 // Markdown marks that a three-line bubble cannot show.
 export function plain(md) {
@@ -62,7 +64,8 @@ function durationText(a, s, now) {
     const from = a.kind === 'main' ? s.feed.findLast((f) => f.kind === 'user')?.ts ?? startOf(a, s) : startOf(a, s);
     return from == null ? '' : fmtDur(now - from);
   }
-  if (a.kind === 'main' || a.display === 'idle') return since(a.lastActivityAt, now);
+  if (a.kind === 'main') return since(a.lastActivityAt, now);
+  if (a.display === 'idle') return since(idleSince(a), now);
   if (a.durationMs != null) return fmtDur(a.durationMs);
   const from = startOf(a, s);
   const to = a.endedAt ?? a.lastActivityAt;
@@ -223,10 +226,13 @@ function createShell(sh, open, on) {
   const label = h('span', { class: 'chip-name' });
   const status = h('span', { class: 'chip-status' });
   const kids = [avatar, icon('shell'), label, status];
+  // A shellId given again names a new shell, started by another call.
+  let callId = sh.callId;
   const el = open
-    ? h('button', { class: 'chip shell', type: 'button', 'data-cat': 'shell', onclick: () => on.onFocusCall(sh.callId) }, kids)
+    ? h('button', { class: 'chip shell', type: 'button', 'data-cat': 'shell', onclick: () => on.onFocusCall(callId) }, kids)
     : h('span', { class: 'chip shell', 'data-cat': 'shell' }, kids);
   function update(x, now, owner) {
+    callId = x.callId;
     setData(el, 'status', x.status);
     setData(el, 'failed', x.exitCode != null && x.exitCode !== 0 ? '' : null);
     avatar.hidden = !owner;
@@ -297,7 +303,7 @@ export function createMap(mapEl, headEl, on) {
       }
       if (path.getAttribute('d') !== d) path.setAttribute('d', d);
       setData(path, 'active', ACTIVE.has(line.agent.display) ? '' : null);
-      setData(path, 'faint', isChip(line.agent) ? '' : null);
+      setData(path, 'faint', line.chip ? '' : null);
       setHue(path, line.agent);
       seen.add(line.key);
       els.push(path);
@@ -332,10 +338,11 @@ export function createMap(mapEl, headEl, on) {
     headBadges.replaceChildren(...badges.map(([tone, text]) => h('span', { class: 'badge', 'data-tone': tone, text })));
   }
 
-  // Running shells first, then the newest ones that ended. Returns whether any shows.
-  function renderShells(s, now, calls, agents) {
+  // Running shells first, then the newest ones that ended within DORMANT_MS of `at`. Returns
+  // whether any shows.
+  function renderShells(s, now, at, calls, agents) {
     const running = s.shells.filter((x) => x.status === 'running').sort((x, y) => (y.startedAt ?? 0) - (x.startedAt ?? 0));
-    const ended = s.shells.filter((x) => x.status !== 'running')
+    const ended = s.shells.filter((x) => x.status !== 'running' && at - (x.endedAt ?? x.startedAt ?? 0) <= DORMANT_MS)
       .sort((x, y) => (y.endedAt ?? y.startedAt ?? 0) - (x.endedAt ?? x.startedAt ?? 0)).slice(0, ENDED_SHELLS);
     const els = [];
     const seen = new Set();
@@ -386,6 +393,8 @@ export function createMap(mapEl, headEl, on) {
         return;
       }
       const active = inner.contains(document.activeElement) ? document.activeElement : null;
+      const at = viewEnd(s, now);
+      const chipOf = (a) => isChip(a, at);
 
       const calls = new Map(s.calls.map((c) => [c.id, c]));
       const focused = focus?.type === 'agent' ? focus.key : focus?.type === 'call' ? calls.get(focus.id)?.agent ?? null : null;
@@ -404,17 +413,17 @@ export function createMap(mapEl, headEl, on) {
       const rowEls = [];
       for (const [depth, agents] of [...byDepth].sort((x, y) => x[0] - y[0])) {
         const r = row(depth);
-        const done = agents.filter(isChip);
+        const done = agents.filter(chipOf);
         let hidden = new Set();
         if (done.length > CHIP_LIMIT && !expanded.has(depth)) {
-          const newest = [...done].sort((x, y) => (y.endedAt ?? y.startedAt ?? 0) - (x.endedAt ?? x.startedAt ?? 0));
+          const newest = [...done].sort((x, y) => chipSince(y) - chipSince(x));
           hidden = new Set(newest.slice(CHIP_LIMIT).map((a) => a.key));
         }
         const cardEls = [];
         const chipEls = [];
         for (const a of agents) {
           if (hidden.has(a.key)) continue;
-          const chip = isChip(a);
+          const chip = chipOf(a);
           const pool = chip ? chips : cards;
           let v = pool.get(a.key);
           if (!v) {
@@ -441,7 +450,7 @@ export function createMap(mapEl, headEl, on) {
       }
       for (const [k] of cards) if (!usedCards.has(k)) cards.delete(k);
       for (const [k] of chips) if (!usedChips.has(k)) chips.delete(k);
-      const hasShells = renderShells(s, now, calls, byKey);
+      const hasShells = renderShells(s, now, at, calls, byKey);
       place(inner, hasShells ? [edges, ...rowEls, shellsEl] : [edges, ...rowEls]);
 
       lines = [];
@@ -453,7 +462,7 @@ export function createMap(mapEl, headEl, on) {
         let p = byKey.has(agent.parent) ? agent.parent : 'main';
         while (!shown.has(p) && p !== 'main') p = byKey.has(byKey.get(p)?.parent) ? byKey.get(p).parent : 'main';
         const from = shown.get(p);
-        if (from) lines.push({ key: agent.key, from, to, agent });
+        if (from) lines.push({ key: agent.key, from, to, agent, chip: chipOf(agent) });
       }
       drawEdges();
       restore(active);

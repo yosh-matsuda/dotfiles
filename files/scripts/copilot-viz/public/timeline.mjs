@@ -1,6 +1,6 @@
 // The timeline: one lane per agent, phase stripes, and tool-call bars, drawn on a canvas.
 
-import { agentTree, isLive } from './store.mjs';
+import { DORMANT_MS, agentTree, isLive, viewEnd } from './store.mjs';
 import { CATEGORIES, STATUS_LABEL, agentHue, callState, fmtClock, fmtDur, h, icon } from './ui.mjs';
 
 const LANE = 22;
@@ -19,6 +19,12 @@ function windowLabel(minutes) {
 // A call of a session whose process ended runs to the end of its log, faded.
 const isOpen = (c) => c.status === 'running' || c.status === 'stopped';
 
+// The idle stripe of a subagent ends where the map folds the agent into a chip.
+function shownPhase(agent, p, now) {
+  if (agent.kind === 'main' || p.state !== 'idle' || p.end != null || now - p.start <= DORMANT_MS) return p;
+  return { ...p, end: p.start + DORMANT_MS };
+}
+
 function lanesOf(s, from, now) {
   const calls = new Map();
   for (const c of s.calls) {
@@ -31,7 +37,8 @@ function lanesOf(s, from, now) {
   const lanes = [];
   for (const { agent, depth } of agentTree(s)) {
     const own = (calls.get(agent.key) ?? []).sort((x, y) => x.startedAt - y.startedAt);
-    const phases = (agent.phases ?? []).filter((p) => (p.end ?? now) >= from && p.start <= now);
+    const phases = (agent.phases ?? []).map((p) => shownPhase(agent, p, now))
+      .filter((p) => (p.end ?? now) >= from && p.start <= now);
     if (own.length || phases.length) lanes.push({ agent, depth, phases, calls: own });
   }
   return lanes;
@@ -101,8 +108,7 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
     width = w;
     const span = zoom * 60_000;
     const live = Boolean(s) && isLive(s, now);
-    // An ended session shows its own last minutes.
-    const end = !s || live || s.stale ? now : Math.min(now, s.meta.lastEventAt ?? now);
+    const end = s ? viewEnd(s, now) : now;
     const from = end - span;
     drawnEnd = end;
     const lanes = s ? lanesOf(s, from, end) : [];

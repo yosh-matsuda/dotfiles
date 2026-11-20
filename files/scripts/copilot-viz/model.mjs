@@ -16,6 +16,11 @@ export const HANDLED_TYPES = new Set([
 ]);
 
 const ORPHAN_MS = 120_000;
+// How far the start of a shell process may lie from the times in the log: btime in /proc/stat
+// has whole seconds, and the process starts between the call and its result.
+const SPAWN_SLACK_MS = 3000;
+// Copilot may run a command without its leading cd, which it turns into the working directory.
+const LEADING_CD_RE = /^cd\s+(?:"[^"]*"|'[^']*'|[^\s;&|]+)\s*&&\s*/;
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const BACKGROUND_RE = new RegExp(`agent_id:?\\s*\`?(${UUID})`, 'i');
 const AGENT_STATUS_RE = new RegExp(`agent_id: (${UUID}), agent_type: [^,]+, status: (\\w+)`, 'g');
@@ -461,17 +466,39 @@ function onTaskStart(S, c, args, owner, ts) {
   pushFeed(S, ts, a.key, 'spawn', oneLine(`${a.type ?? 'agent'} agent ${a.name ?? a.description ?? ''}`, TEXT.summary));
 }
 
+function shellKeys(command) {
+  const keys = new Set([firstLine(command, TEXT.summary), firstLine(command?.replace(LEADING_CD_RE, ''), TEXT.summary)]);
+  keys.delete(null);
+  return [...keys];
+}
+
 function shellFor(S, id, c, ts) {
   let sh = S.shells.get(id);
+  // Agents give the same shellId to a new shell once the one before ended.
+  if (sh && c && sh.callId !== c.id) {
+    S.shells.delete(id);
+    sh = null;
+  }
   if (!sh) {
     sh = {
       id, agent: c?.agent ?? 'main', callId: c?.id ?? null, description: c?.extra.description ?? null,
       command: c ? firstLine(c.command, TEXT.summary) : null, detached: Boolean(c?.extra.detach),
       status: 'running', exitCode: null, startedAt: c?.startedAt ?? ts, endedAt: null,
+      // For the process check. seenAt: when the log reported the start. keys: the arguments that
+      // the process may show. batched: startedAt is the commit time of an auto turn, after the
+      // shell started. pid, ticks: the matched process. missedAt: when the check last missed the
+      // process. inferred: the check, not the log, ended the shell. watch: whether the check
+      // applies.
+      proc: {
+        seenAt: ts, keys: shellKeys(c?.command), batched: Boolean(c?.replayed), pid: null, ticks: null, missedAt: null,
+        inferred: false, watch: true,
+      },
     };
-    // A replayed start can follow the live notice that the shell finished.
+    // A replayed start can follow the live notice that the shell finished. An older end is of
+    // an earlier shell with the same id.
     const end = S.shellEnds.get(id);
-    if (end) Object.assign(sh, end);
+    S.shellEnds.delete(id);
+    if (end && (c?.replayed || end.endedAt >= sh.startedAt)) Object.assign(sh, end);
     S.shells.set(id, sh);
     for (const [k, v] of S.shells) {
       if (S.shells.size <= LIMITS.shells) break;
@@ -481,17 +508,95 @@ function shellFor(S, id, c, ts) {
   return sh;
 }
 
-function endShell(S, id, ts, status, exitCode) {
+// early: the end comes in a notice, which can come before the replayed start of its shell. A
+// tool result names shells that it ends too, such as the shell of a sync bash call, which has no
+// start to wait for.
+function endShell(S, id, ts, status, exitCode, early = false) {
   const sh = S.shells.get(id);
   if (!sh) {
+    if (!early) return;
     S.shellEnds.set(id, { status, exitCode: exitCode ?? null, endedAt: ts });
     if (S.shellEnds.size > 200) S.shellEnds.delete(S.shellEnds.keys().next().value);
     return;
   }
-  if (sh.status !== 'running') return;
+  // The log can still report the end that the process check inferred.
+  if (sh.status !== 'running' && !sh.proc.inferred) return;
   sh.status = status;
   sh.exitCode = exitCode ?? sh.exitCode;
-  sh.endedAt = ts;
+  sh.endedAt = sh.proc.inferred ? sh.endedAt ?? ts : ts;
+  sh.proc.inferred = false;
+}
+
+// A command that leaves work in the background ends its own process, while Copilot still reads
+// the output of that work; such a shell keeps running without a process to check.
+function reviveShell(S, id) {
+  const sh = S.shells.get(id);
+  if (!sh?.proc.inferred) return;
+  Object.assign(sh, { status: 'running', exitCode: null, endedAt: null });
+  Object.assign(sh.proc, { inferred: false, watch: false });
+}
+
+const isCopilotShell = (argv) => /(?:^|\/)bash$/.test(argv[0]) && argv.includes('--noprofile') && argv.includes('-c');
+
+// Copilot logs no end for a shell of a subagent unless the subagent reads it. On Linux the
+// monitor passes the processes that may be shells of Copilot: { pid, ticks, start, argv }. bash
+// may exec the last command of its line, which changes the arguments, so a shell follows the PID
+// and the start ticks of the process it matched. A shell without any process that started before
+// the log reported it has ended, once the processes of any session on the host showed that
+// Copilot runs its shells this way. `taken`: pid => ticks of the processes of other sessions.
+function checkShellProcs(S, procs, ts, host, taken) {
+  const shells = [...S.shells.values()].filter((sh) => sh.status === 'running' && !sh.detached && sh.proc.watch);
+  const byPid = new Map(procs.map((p) => [p.pid, p]));
+  const claimed = new Set(procs.filter((p) => taken.get(p.pid) === p.ticks).map((p) => p.pid));
+  let changed = false;
+  if (procs.some((p) => isCopilotShell(p.argv))) host.shellsProven = true;
+  // /proc can skip a child while another child exits, so a shell ends on the second miss in a
+  // row. `seen`: whether the shell had a process, which ended at the first miss.
+  const miss = (sh, seen) => {
+    if (sh.proc.missedAt == null) {
+      sh.proc.missedAt = ts;
+      return;
+    }
+    Object.assign(sh, { status: 'done', exitCode: null, endedAt: seen ? sh.proc.missedAt : null });
+    Object.assign(sh.proc, { pid: null, ticks: null, missedAt: null, inferred: true });
+    changed = true;
+  };
+  const claim = (sh, p) => {
+    claimed.add(p.pid);
+    Object.assign(sh.proc, { pid: p.pid, ticks: p.ticks, missedAt: null });
+  };
+  for (const sh of shells) {
+    if (sh.proc.pid == null) continue;
+    const p = byPid.get(sh.proc.pid);
+    if (p?.ticks === sh.proc.ticks) claim(sh, p);
+    else miss(sh, true);
+  }
+  const open = shells.filter((sh) => sh.status === 'running' && sh.proc.pid == null).sort((x, y) => x.startedAt - y.startedAt);
+  // A single command that bash execs shows its words as the arguments.
+  const shows = (p, sh) => [...p.argv, p.argv.join(' ')].some((a) => sh.proc.keys.includes(firstLine(a, TEXT.summary)));
+  // Matches by command go first, so that a match by time cannot take their processes.
+  for (const sh of open) {
+    const p = procs.find((x) => !claimed.has(x.pid) && shows(x, sh));
+    if (!p) continue;
+    claim(sh, p);
+    host.shellsProven = true;
+  }
+  // A committed auto turn stamps its tool calls after the shells started: only the command tells
+  // such shells apart, and any older process may be the shell.
+  for (const sh of open) {
+    if (sh.proc.pid != null) continue;
+    const lo = sh.proc.batched ? -Infinity : sh.startedAt - SPAWN_SLACK_MS;
+    const hi = sh.proc.seenAt + SPAWN_SLACK_MS;
+    const near = procs.filter((x) => !claimed.has(x.pid) && x.start >= lo && x.start <= hi);
+    if (!near.length) {
+      if (host.shellsProven) miss(sh, false);
+    } else if (sh.proc.batched) {
+      sh.proc.missedAt = null;
+    } else {
+      claim(sh, near.sort((x, y) => Math.abs(x.start - sh.startedAt) - Math.abs(y.start - sh.startedAt))[0]);
+    }
+  }
+  return changed;
 }
 
 function agentStatusFromText(S, a, status, ts) {
@@ -549,6 +654,7 @@ function afterComplete(S, c, text, success, ts, live) {
       for (const d of text.matchAll(SHELL_DONE_RE)) endShell(S, d[1], ts, 'done', Number(d[2]));
       // A large output is replaced by a file reference that drops the marker.
       if (c.extra.shellId && !/is still running/.test(text)) endShell(S, c.extra.shellId, ts, 'done', null);
+      else if (c.extra.shellId) reviveShell(S, c.extra.shellId);
       break;
     }
     case 'stop_bash':
@@ -912,7 +1018,7 @@ function handle(S, ev, home) {
         if (!a?.resultFed) pushFeed(S, ts, a?.key ?? 'main', 'agent', oneLine(`${who} finished`, TEXT.feed));
       } else if (k.type === 'shell_completed' || k.type === 'shell_detached_completed') {
         const id = String(k.shellId);
-        endShell(S, id, ts, 'done', typeof k.exitCode === 'number' ? k.exitCode : null);
+        endShell(S, id, ts, 'done', typeof k.exitCode === 'number' ? k.exitCode : null, true);
         const label = k.description ? `"${k.description}"` : id;
         const code = typeof k.exitCode === 'number' ? ` (exit ${k.exitCode})` : '';
         pushFeed(S, ts, S.shells.get(id)?.agent ?? 'main', 'notice', oneLine(`Shell ${label} finished${code}`, TEXT.feed));
@@ -1016,7 +1122,7 @@ function serialize(S) {
     intent: c.intent, delta: c.delta, perm: c.perm && alive !== false, detail: c.detailRev,
     pending: S.meta.batched && c.outcome === OUTCOME_RANK.hook,
   }));
-  const shells = [...S.shells.values()].map((sh) => ({
+  const shells = [...S.shells.values()].map(({ proc, ...sh }) => ({
     ...sh, status: alive === false && sh.status === 'running' ? (sh.detached ? 'unknown' : 'stopped') : sh.status,
   }));
   let newest = 0;
@@ -1036,6 +1142,8 @@ export function createModel({ home = '', now = Date.now, onError = null } = {}) 
   const sessions = new Map();
   const dirty = new Set();
   const removed = new Set();
+  // The model reads the sessions of one host; see checkShellProcs.
+  const host = { shellsProven: false };
   let rev = 0;
   let errors = 0;
   // A client keeps the state of a session, such as its feed scroll, while the epoch stays.
@@ -1113,6 +1221,23 @@ export function createModel({ home = '', now = Date.now, onError = null } = {}) 
           }
         }
       }
+    },
+    // Whether the session has a shell that only the processes can show the end of.
+    wantsShellCheck(sid) {
+      const S = sessions.get(sid);
+      if (!S || S.replay) return false;
+      for (const sh of S.shells.values()) if (sh.status === 'running' && !sh.detached && sh.proc.watch) return true;
+      return false;
+    },
+    checkShells(sid, procs, ts) {
+      const S = sessions.get(sid);
+      if (!S) return;
+      const taken = new Map();
+      for (const T of sessions.values()) {
+        if (T === S) continue;
+        for (const sh of T.shells.values()) if (sh.status === 'running' && sh.proc.pid != null) taken.set(sh.proc.pid, sh.proc.ticks);
+      }
+      if (checkShellProcs(S, procs, ts, host, taken)) dirty.add(sid);
     },
     snapshot: () => ({ rev, sessions: [...sessions.values()].map(serialize) }),
     drain() {
