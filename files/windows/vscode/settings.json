@@ -1,3 +1,4 @@
 {
+    "chat.agentHost.copilot.includeCoAuthoredBy": false,
     "terminal.integrated.copyOnSelection": true
 }
