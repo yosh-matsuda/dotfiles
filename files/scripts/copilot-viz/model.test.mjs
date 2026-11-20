@@ -155,6 +155,43 @@ test('a background agent finishes, then write_agent starts another run', () => {
   assert.deepEqual(s.feed.filter((f) => f.agent === 'tc:T').map((f) => f.kind), ['spawn', 'result', 'handoff', 'result']);
 });
 
+test('an agent whose end only a tool result reports leaves the inferred response time then', () => {
+  const B = '00000000-0000-4000-8000-00000000000b';
+  const m = createModel();
+  feed(m, 's', [
+    E(0, 'session.start'),
+    E(1, 'user.message', { content: 'review' }),
+    E(2, 'tool.execution_start', { toolCallId: 'T', toolName: 'task', arguments: { agent_type: 'code-review', name: 'r1', mode: 'background', prompt: 'Look' } }),
+    E(2, 'subagent.started', { toolCallId: 'T', agentType: 'code-review', executionMode: 'background', resumable: true }, A),
+    E(3, 'tool.execution_complete', { toolCallId: 'T', success: true, result: { content: `Agent started in background with agent_id: ${A}.` } }),
+    E(4, 'tool.execution_start', { toolCallId: 'R', toolName: 'read_agent', arguments: { agent_id: A, wait: true } }),
+    E(5, 'assistant.message', { content: 'No issues', toolRequests: [], parentToolCallId: 'T' }, A),
+    E(5, 'assistant.turn_end', { parentToolCallId: 'T' }, A),
+    E(6, 'tool.execution_complete', { toolCallId: 'R', success: true, result: { content: `Agent is idle (waiting for messages). agent_id: ${A}, agent_type: code-review, status: idle, elapsed: 4s` } }),
+  ]);
+  let a = agent(view(m, 's'), 'tc:T');
+  assert.equal(a.status, 'idle');
+  assert.deepEqual(a.phases, [
+    { state: 'thinking', start: T0 + 2000, end: T0 + 6000 },
+    { state: 'idle', start: T0 + 6000, end: null },
+  ]);
+
+  feed(m, 's', [
+    E(7, 'tool.execution_start', { toolCallId: 'W', toolName: 'write_agent', arguments: { agent_id: A, message: 'More?' } }),
+    E(7, 'tool.execution_complete', { toolCallId: 'W', success: true, result: { content: `Message delivered to agent ${A}.` } }),
+    // A sync agent may end with its task result alone.
+    E(8, 'tool.execution_start', { toolCallId: 'S', toolName: 'task', arguments: { agent_type: 'explore', name: 'x', mode: 'sync', prompt: 'Find' } }),
+    E(8, 'subagent.started', { toolCallId: 'S', agentType: 'explore', executionMode: 'sync' }, B),
+    E(9, 'tool.execution_complete', { toolCallId: 'S', success: true, result: { content: 'Found' } }),
+  ]);
+  const s = view(m, 's');
+  a = agent(s, 'tc:T');
+  assert.equal(a.status, 'running');
+  assert.deepEqual(a.phases.at(-1), { state: 'thinking', start: T0 + 7000, end: null });
+  assert.equal(agent(s, 'tc:S').status, 'done');
+  assert.deepEqual(agent(s, 'tc:S').phases, [{ state: 'thinking', start: T0 + 8000, end: T0 + 9000 }]);
+});
+
 test('an auto session shows live hooks, and its committed turns only add details', () => {
   const m = createModel();
   feed(m, 's', [

@@ -494,7 +494,7 @@ function endShell(S, id, ts, status, exitCode) {
   sh.endedAt = ts;
 }
 
-function agentStatusFromText(a, status, ts) {
+function agentStatusFromText(S, a, status, ts) {
   if (!a) return;
   if (status === 'running') wake(a, ts);
   else if (status === 'idle') {
@@ -502,6 +502,7 @@ function agentStatusFromText(a, status, ts) {
   } else if (status === 'completed' || status === 'done') settle(a, 'done', ts);
   else if (status === 'failed') settle(a, 'failed', ts);
   else if (status === 'cancelled') settle(a, 'cancelled', ts);
+  syncPhase(S, a, ts);
 }
 
 // live is false for replayed events, which may only fill in what no live event reported.
@@ -523,13 +524,20 @@ function afterComplete(S, c, text, success, ts, live) {
         a.result = (live ? clip(text, TEXT.result) : null) ?? a.result ?? clip(text, TEXT.result);
         pushResult(S, ts, a, text, success);
       }
+      syncPhase(S, a, ts);
       break;
     }
     case 'write_agent':
-      if (success && live) for (const id of c.extra.targets ?? []) wake(knownAgent(S, id), ts);
+      if (success && live) {
+        for (const id of c.extra.targets ?? []) {
+          const a = knownAgent(S, id);
+          wake(a, ts);
+          syncPhase(S, a, ts);
+        }
+      }
       break;
     case 'read_agent': case 'list_agents':
-      if (live) for (const m of text.matchAll(AGENT_STATUS_RE)) agentStatusFromText(knownAgent(S, m[1]), m[2], ts);
+      if (live) for (const m of text.matchAll(AGENT_STATUS_RE)) agentStatusFromText(S, knownAgent(S, m[1]), m[2], ts);
       break;
     case 'bash': case 'powershell': {
       const m = SHELL_STARTED_RE.exec(text);
@@ -603,6 +611,7 @@ function onHook(S, ev, ts, home) {
       const task = c.name === 'task' && failed ? S.agents.get(`tc:${c.id}`) : undefined;
       if (task && (task.status === 'starting' || task.status === 'orphan')) {
         settle(task, 'failed', ts);
+        syncPhase(S, task, ts);
         task.error = task.error ?? c.error;
       }
       break;
