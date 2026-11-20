@@ -311,6 +311,7 @@ copilot-viz stop
 -   An auto session writes its messages and tool events only when Copilot commits the turn, and the session list marks it `auto`. Copilot logs each hook as it starts, so the calls of the turn appear while it runs, through the `preToolUse` hook that `files/copilot/settings.json` registers for every tool. Copilot CLI in a terminal has no `postToolUse` hook, so those calls show as running until the commit; the VS Code agent host registers one, which ends them earlier.
 -   Each session keeps its newest 300 tool calls and 150 feed entries.
 -   The timeline marks idle, inferred response-pending time, and waits for input or approval with a thin lane stripe; tool bars continue to show execution time.
+-   A background shell gets an indented lane under the agent that started it, which spans the time the shell runs, since its `bash` call ends as soon as the shell starts. Shells that do not overlap share a lane, and each agent has at most four shell lanes. A detached shell whose end the log never reported ends where Copilot restarted, or at the end of the log of a session whose process ended.
 
 The agent lifecycle follows [agenttop](https://github.com/daknoblo/agenttop), and its MIT license is in [LICENSE.agenttop](files/scripts/copilot-viz/LICENSE.agenttop).
 

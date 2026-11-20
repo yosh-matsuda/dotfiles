@@ -3,7 +3,7 @@
 
 import { clientName } from './sessions.mjs';
 import { DORMANT_MS, agentTree, idleSince, isDormant, isQuiet, sessionTitle, viewEnd } from './store.mjs';
-import { ACTIVE, STATUS_LABEL, TERMINAL, fmtAgo, fmtDur, fmtTokens, h, icon, initials, move, restore, setData, setHue, setText, succeed, svgEl } from './ui.mjs';
+import { ACTIVE, STATUS_LABEL, TERMINAL, fmtAgo, fmtDur, fmtTokens, h, icon, initials, move, restore, setData, setHue, setText, shellName, shellStatus, succeed, svgEl } from './ui.mjs';
 
 const CHIP_LIMIT = 14;
 const ENDED_SHELLS = 6;
@@ -210,29 +210,16 @@ function createChip(key, on) {
   return { el, update };
 }
 
-function shellStatus(sh, now) {
-  const took = sh.startedAt != null && sh.endedAt != null ? fmtDur(sh.endedAt - sh.startedAt) : '';
-  let parts;
-  if (sh.status === 'running') parts = ['running', sh.startedAt == null ? '' : fmtDur(now - sh.startedAt)];
-  else if (sh.status === 'done') parts = [sh.exitCode != null ? `exit ${sh.exitCode}` : 'finished', took];
-  else if (sh.status === 'unknown') parts = ['end unknown'];
-  else parts = [STATUS_LABEL[sh.status] ?? sh.status, took];
-  return parts.filter(Boolean).join(' · ');
-}
-
 // A shell opens the call that started it while the session still keeps that call.
 function createShell(sh, open, on) {
   const avatar = h('span', { class: 'avatar mini', 'aria-hidden': 'true' });
   const label = h('span', { class: 'chip-name' });
   const status = h('span', { class: 'chip-status' });
   const kids = [avatar, icon('shell'), label, status];
-  // A shellId given again names a new shell, started by another call.
-  let callId = sh.callId;
   const el = open
-    ? h('button', { class: 'chip shell', type: 'button', 'data-cat': 'shell', onclick: () => on.onFocusCall(callId) }, kids)
+    ? h('button', { class: 'chip shell', type: 'button', 'data-cat': 'shell', onclick: () => on.onFocusCall(sh.callId) }, kids)
     : h('span', { class: 'chip shell', 'data-cat': 'shell' }, kids);
   function update(x, now, owner) {
-    callId = x.callId;
     setData(el, 'status', x.status);
     setData(el, 'failed', x.exitCode != null && x.exitCode !== 0 ? '' : null);
     avatar.hidden = !owner;
@@ -240,7 +227,7 @@ function createShell(sh, open, on) {
       setHue(avatar, owner);
       setText(avatar, initials(owner));
     }
-    setText(label, x.description ?? x.command ?? `shell ${x.id}`);
+    setText(label, shellName(x));
     setText(status, shellStatus(x, now));
     el.title = [x.description, x.command, `shell ${x.id}`, owner && `by ${owner.name}`].filter(Boolean).join('\n');
   }
@@ -348,16 +335,18 @@ export function createMap(mapEl, headEl, on) {
     const seen = new Set();
     for (const sh of [...running, ...ended]) {
       const open = sh.callId != null && calls.has(sh.callId);
-      let v = shells.get(sh.id);
+      // A shellId given again names a new shell, started by another call.
+      const key = `${sh.id}\u0000${sh.callId}`;
+      let v = shells.get(key);
       if (!v || v.open !== open) {
         const next = createShell(sh, open, on);
         if (v) succeed(v.el, next.el);
         v = next;
-        shells.set(sh.id, v);
+        shells.set(key, v);
       }
       v.update(sh, now, agents.get(sh.agent));
       els.push(v.el);
-      seen.add(sh.id);
+      seen.add(key);
     }
     for (const k of shells.keys()) if (!seen.has(k)) shells.delete(k);
     place(shellList, els);

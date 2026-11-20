@@ -1,7 +1,8 @@
-// The timeline: one lane per agent, phase stripes, and tool-call bars, drawn on a canvas.
+// The timeline: one lane per agent, phase stripes, and tool-call bars, drawn on a canvas. Under
+// each agent, shell lanes show how long its background shells run.
 
 import { DORMANT_MS, agentTree, isLive, viewEnd } from './store.mjs';
-import { CATEGORIES, STATUS_LABEL, agentHue, callState, fmtClock, fmtDur, h, icon } from './ui.mjs';
+import { CATEGORIES, STATUS_LABEL, agentHue, callState, fmtClock, fmtDur, h, icon, shellName, shellStatus } from './ui.mjs';
 
 const LANE = 22;
 const AXIS = 22;
@@ -11,6 +12,8 @@ const TICK_STEPS = [1, 2, 5, 10, 15, 30, 60, 120].map((m) => m * 60_000);
 const HIDDEN_CALLS = new Set(['report_intent']);
 const PROBES = ['fg', 'fg2', 'fg3', 'line', 'panel', 'panel2', 'purple', 'orange', 'red'];
 const MOVE_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']);
+const SHELL_LANES = 4;
+const SHELL_PATH = 'M4 6l5 5-5 5M12 17h8';
 
 function windowLabel(minutes) {
   return minutes % 60 ? `${minutes} minutes` : minutes === 60 ? 'hour' : `${minutes / 60} hours`;
@@ -25,7 +28,7 @@ function shownPhase(agent, p, now) {
   return { ...p, end: p.start + DORMANT_MS };
 }
 
-function lanesOf(s, from, now) {
+export function lanesOf(s, from, now) {
   const calls = new Map();
   for (const c of s.calls) {
     if (c.startedAt == null || HIDDEN_CALLS.has(c.name)) continue;
@@ -34,15 +37,57 @@ function lanesOf(s, from, now) {
     if (!calls.has(c.agent)) calls.set(c.agent, []);
     calls.get(c.agent).push(c);
   }
+  const tree = agentTree(s);
+  const keys = new Set(tree.map((x) => x.agent.key));
+  const fallback = keys.has('main') ? 'main' : tree[0]?.agent.key;
+  const shells = new Map();
+  for (const sh of s.shells ?? []) {
+    if (sh.startedAt == null || sh.startedAt > now || shellEnd(sh, now) < from) continue;
+    const key = keys.has(sh.agent) ? sh.agent : fallback;
+    if (!shells.has(key)) shells.set(key, []);
+    shells.get(key).push(sh);
+  }
   const lanes = [];
-  for (const { agent, depth } of agentTree(s)) {
+  for (const { agent, depth } of tree) {
     const own = (calls.get(agent.key) ?? []).sort((x, y) => x.startedAt - y.startedAt);
     const phases = (agent.phases ?? []).map((p) => shownPhase(agent, p, now))
       .filter((p) => (p.end ?? now) >= from && p.start <= now);
-    if (own.length || phases.length) lanes.push({ agent, depth, phases, calls: own });
+    const rows = packShells(shells.get(agent.key) ?? [], now, (now - from) / 100);
+    // An agent heads its shell lanes even when it has nothing else to show.
+    if (own.length || phases.length || rows.length) lanes.push({ kind: 'agent', agent, depth, phases, calls: own });
+    for (const list of rows) lanes.push({ kind: 'shell', agent, depth, shells: list });
   }
   return lanes;
 }
+
+// Where the bar of a shell ends. A shell that the log lost track of when Copilot restarted ends
+// there; one of a session whose process ended runs to the end of its log, like its calls. A
+// finished shell without an end has no known length. The shell of an auto turn can end before
+// the commit time that the log gives as its start, so no bar ends before it starts.
+function shellEnd(sh, now) {
+  let end = sh.startedAt;
+  if (sh.endedAt != null) end = sh.endedAt;
+  else if (sh.status === 'running') end = now;
+  else if (sh.status === 'stopped' || sh.status === 'unknown') end = Math.min(now, sh.lostAt ?? now);
+  return Math.max(sh.startedAt, end);
+}
+
+// Shells that do not overlap share a lane. Past SHELL_LANES lanes, a shell joins the lane that
+// frees first. `gap` keeps the bars of a lane apart.
+function packShells(list, now, gap) {
+  const rows = [];
+  for (const sh of list.sort((x, y) => x.startedAt - y.startedAt)) {
+    let row = rows.find((r) => r.end + gap < sh.startedAt);
+    if (!row && rows.length >= SHELL_LANES) row = rows.reduce((x, y) => (y.end < x.end ? y : x));
+    if (!row) rows.push(row = { end: -Infinity, shells: [] });
+    row.shells.push(sh);
+    row.end = Math.max(row.end, shellEnd(sh, now));
+  }
+  return rows.map((r) => r.shells);
+}
+
+// The hits of shells get ids that no call has. A shellId given again names another shell.
+const shellHitId = (sh) => `shell\u0000${sh.id}\u0000${sh.callId}`;
 
 export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
   const ctx = canvas.getContext('2d');
@@ -59,6 +104,7 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
   let keyFocus = false;
   let keyed = false;
   let shownSid = null;
+  let shellGlyph = null;
 
   function refreshColors() {
     if (!probe.childElementCount) {
@@ -128,7 +174,7 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
     const x = (t) => endX - ((end - t) / span) * plot;
     const bottom = height - PAD;
 
-    // Lanes and the agent names.
+    // Lanes and the agent names. A shell lane names its shell, or counts the shells it holds.
     ctx.font = `12px ${colors.font}`;
     lanes.forEach((lane, i) => {
       const y = AXIS + i * LANE;
@@ -138,8 +184,24 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
         ctx.fillRect(0, y, w, LANE);
         ctx.globalAlpha = 1;
       }
+      const indent = 10 + Math.min(lane.depth, 4) * 8 + (lane.kind === 'shell' ? 8 : 0);
+      if (lane.kind === 'shell') {
+        shellGlyph ??= new Path2D(SHELL_PATH);
+        ctx.save();
+        ctx.translate(indent - 5, y + LANE / 2 - 5);
+        ctx.scale(10 / 24, 10 / 24);
+        ctx.strokeStyle = colors.cat.shell;
+        ctx.lineWidth = 2.6;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.stroke(shellGlyph);
+        ctx.restore();
+        const text = lane.shells.length === 1 ? shellName(lane.shells[0]) : `${lane.shells.length} shells`;
+        ctx.fillStyle = colors.fg3;
+        ctx.fillText(fit(text, LABEL - indent - 16), indent + 9, y + LANE / 2 + 0.5);
+        return;
+      }
       const hue = agentHue(lane.agent);
-      const indent = 10 + Math.min(lane.depth, 4) * 8;
       ctx.fillStyle = colors.dark ? `hsl(${hue}, 70%, 70%)` : `hsl(${hue}, 55%, 48%)`;
       ctx.beginPath();
       ctx.arc(indent, y + LANE / 2, 3.5, 0, Math.PI * 2);
@@ -192,12 +254,59 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
     ctx.lineTo(w, AXIS - 0.5);
     ctx.stroke();
 
-    // The calls.
+    // The calls and the shells.
     const focused = last.focus?.type === 'call' ? last.focus.id : null;
+    const callIds = new Set(s?.calls.map((c) => c.id));
     hits = [];
     lanes.forEach((lane, i) => {
       const y = AXIS + i * LANE + 4;
       const hgt = LANE - 8;
+      if (lane.kind === 'shell') {
+        for (const sh of lane.shells) {
+          // A finished shell without an end gets a short bar.
+          const least = sh.endedAt == null && sh.status === 'done' ? 6 : 2;
+          let x0 = Math.max(LABEL, x(sh.startedAt));
+          let x1 = Math.min(w - 2, x(shellEnd(sh, end)));
+          if (x1 - x0 < least) x1 = x0 + least;
+          if (x0 >= w - 2) continue;
+          x0 = Math.round(x0 * 2) / 2;
+          x1 = Math.round(x1 * 2) / 2;
+          const running = sh.status === 'running';
+          ctx.fillStyle = colors.cat.shell;
+          ctx.globalAlpha = running ? 0.32 : sh.status === 'done' ? 0.2 : 0.12;
+          box(x0, y, x1 - x0, hgt, 3);
+          ctx.fill();
+          ctx.strokeStyle = colors.cat.shell;
+          ctx.globalAlpha = running ? 1 : 0.55;
+          box(x0 + 0.5, y + 0.5, x1 - x0 - 1, hgt - 1, 3);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          if (x1 - x0 > 40) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(x0, y, x1 - x0, hgt);
+            ctx.clip();
+            ctx.font = `11px ${colors.font}`;
+            ctx.fillStyle = colors.fg2;
+            ctx.fillText(fit(shellName(sh), x1 - x0 - 10), x0 + 5, y + hgt / 2 + 0.5);
+            ctx.restore();
+          }
+          if (sh.exitCode != null && sh.exitCode !== 0) {
+            ctx.fillStyle = colors.red;
+            ctx.fillRect(x0, y + hgt - 2.5, x1 - x0, 2.5);
+          }
+          if (sh.callId != null && sh.callId === focused) {
+            ctx.strokeStyle = colors.fg;
+            ctx.lineWidth = 1.5;
+            box(x0 - 1, y - 1, x1 - x0 + 2, hgt + 2, 4);
+            ctx.stroke();
+            ctx.lineWidth = 1;
+          }
+          const target = callIds.has(sh.callId) ? sh.callId : null;
+          hits.push({ kind: 'shell', id: shellHitId(sh), start: sh.startedAt, target, x0, x1, y0: y - 2, y1: y + hgt + 2, sh, agent: lane.agent, lane: i });
+        }
+        return;
+      }
       for (const c of lane.calls) {
         const cEnd = c.endedAt ?? (isOpen(c) ? end : c.startedAt);
         let x0 = Math.max(LABEL, x(c.startedAt));
@@ -222,14 +331,14 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
           ctx.stroke();
           ctx.lineWidth = 1;
         }
-        hits.push({ x0, x1, y0: y - 2, y1: y + hgt + 2, c, agent: lane.agent, lane: i });
+        hits.push({ kind: 'call', id: c.id, start: c.startedAt, target: c.id, x0, x1, y0: y - 2, y1: y + hgt + 2, c, agent: lane.agent, lane: i });
       }
     });
 
     // A narrow stripe stays visible over call bars; hatching marks inferred response time.
     lanes.forEach((lane, i) => {
       const y = AXIS + i * LANE + LANE - 3;
-      for (const p of lane.phases) {
+      for (const p of lane.phases ?? []) {
         const x0 = Math.max(LABEL, x(p.start));
         const x1 = Math.min(endX, x(p.end ?? end));
         if (x1 <= x0) continue;
@@ -259,11 +368,15 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
       }
     });
 
-    // The cursor stays on its call, or on a call near it when its call leaves the window.
-    let cur = cursor && hits.find((hit) => hit.c.id === cursor.id);
+    // The cursor stays on its bar, or on a bar near it when its bar leaves the window: one of the
+    // same kind and agent if any.
+    let cur = cursor && hits.find((hit) => hit.id === cursor.id);
     if (cursor && !cur) {
-      cur = document.activeElement === canvas ? hits.find((hit) => hit.agent.key === cursor.agent) ?? newest() : null;
-      cursor = cur ? { id: cur.c.id, agent: cur.agent.key } : null;
+      cur = document.activeElement === canvas
+        ? hits.find((hit) => hit.kind === cursor.kind && hit.agent.key === cursor.agent)
+          ?? hits.find((hit) => hit.agent.key === cursor.agent) ?? newest()
+        : null;
+      cursor = cur ? cursorOf(cur) : null;
       if (cur && keyFocus) announce(cur);
     }
     if (cur && keyFocus && document.activeElement === canvas) {
@@ -296,15 +409,20 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
       ctx.textAlign = 'left';
     }
 
-    const count = lanes.reduce((n, l) => n + l.calls.length, 0);
+    const count = lanes.reduce((n, l) => n + (l.calls?.length ?? 0), 0);
+    const agents = lanes.filter((l) => l.kind === 'agent').length;
+    const shells = lanes.reduce((n, l) => n + (l.shells?.length ?? 0), 0);
     const where = live || !s ? `the last ${windowLabel(zoom)}` : `the ${windowLabel(zoom)} before ${fmtClock(end, false)}`;
-    const label = `Tool calls in ${where}: ${count} ${count === 1 ? 'call' : 'calls'} by ${lanes.length} ${lanes.length === 1 ? 'agent' : 'agents'}`;
+    const label = `Tool calls in ${where}: ${count} ${count === 1 ? 'call' : 'calls'} by ${agents} ${agents === 1 ? 'agent' : 'agents'}`
+      + (shells ? `, ${shells} background ${shells === 1 ? 'shell' : 'shells'}` : '');
     if (canvas.getAttribute('aria-label') !== label) canvas.setAttribute('aria-label', label);
     showTip();
   }
 
+  const cursorOf = (hit) => ({ id: hit.id, kind: hit.kind, agent: hit.agent.key });
+
   function newest() {
-    return hits.reduce((best, hit) => (!best || hit.c.startedAt >= best.c.startedAt ? hit : best), null);
+    return hits.reduce((best, hit) => (!best || hit.start >= best.start ? hit : best), null);
   }
 
   function hitAt(px, py) {
@@ -312,12 +430,13 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
     for (const hit of hits) {
       if (py < hit.y0 || py > hit.y1 || px < hit.x0 - 3 || px > hit.x1 + 3) continue;
       const inside = px >= hit.x0 && px <= hit.x1;
-      if (!best || (inside && !best.inside) || (inside === best.inside && hit.c.startedAt >= best.hit.c.startedAt)) best = { hit, inside };
+      if (!best || (inside && !best.inside) || (inside === best.inside && hit.start >= best.hit.start)) best = { hit, inside };
     }
     return best?.hit ?? null;
   }
 
-  function facts({ c, agent }) {
+  function facts({ c, sh, agent }) {
+    if (sh) return [agent.name, `shell ${sh.id}`, shellStatus(sh, drawnEnd), fmtClock(sh.startedAt)].filter(Boolean);
     const state = c.status === 'running' ? callState(c) : STATUS_LABEL[c.status] ?? c.status;
     // A call without an end and not running has no known length.
     const open = c.endedAt == null && c.status !== 'running';
@@ -325,11 +444,17 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
     return [agent.name, state, ran, fmtClock(c.startedAt)].filter(Boolean);
   }
 
+  // The name, the text, and the category of the bar that a hit stands for.
+  function about({ c, sh }) {
+    if (sh) return { name: shellName(sh), text: sh.command !== shellName(sh) ? sh.command : null, category: 'shell' };
+    return { name: c.name, text: c.summary ?? c.title, category: c.category };
+  }
+
   function showTip() {
     let hit = hover && hitAt(hover.x, hover.y);
-    canvas.style.cursor = hit ? 'pointer' : '';
+    canvas.style.cursor = hit?.target ? 'pointer' : '';
     const pointer = Boolean(hit);
-    if (!hit && keyed && cursor && document.activeElement === canvas) hit = hits.find((x) => x.c.id === cursor.id) ?? null;
+    if (!hit && keyed && cursor && document.activeElement === canvas) hit = hits.find((x) => x.id === cursor.id) ?? null;
     let bar = null;
     if (hit && !pointer) {
       const cr = canvas.getBoundingClientRect();
@@ -342,10 +467,9 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
       tip.hidden = true;
       return;
     }
-    const { c } = hit;
-    const title = h('div', { class: 'tip-title', 'data-cat': c.category }, icon(c.category), h('span', { text: c.name }));
-    const what = c.summary ?? c.title;
-    tip.replaceChildren(title, what ? h('div', { class: 'tip-text', text: what }) : '', h('div', { class: 'tip-meta', text: facts(hit).join(' · ') }));
+    const { name, text, category } = about(hit);
+    const title = h('div', { class: 'tip-title', 'data-cat': category }, icon(category), h('span', { text: name }));
+    tip.replaceChildren(title, text ? h('div', { class: 'tip-text', text }) : '', h('div', { class: 'tip-meta', text: facts(hit).join(' · ') }));
     tip.hidden = false;
     const r = tip.getBoundingClientRect();
     let left = pointer ? hover.cx + 14 : bar.left;
@@ -357,9 +481,9 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
   }
 
   function announce(hit) {
-    const { c } = hit;
-    const text = [c.name, c.summary ?? c.title, ...facts(hit)].filter(Boolean).join(', ');
-    if (say.textContent !== text) say.textContent = text;
+    const { name, text } = about(hit);
+    const said = [hit.sh ? 'Background shell' : '', name, text, ...facts(hit)].filter(Boolean).join(', ');
+    if (say.textContent !== said) say.textContent = said;
   }
 
   function reveal(hit) {
@@ -370,7 +494,7 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
   }
 
   function moveTo(hit) {
-    cursor = { id: hit.c.id, agent: hit.agent.key };
+    cursor = cursorOf(hit);
     hover = null;
     keyFocus = true;
     keyed = true;
@@ -379,8 +503,8 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
     announce(hit);
   }
 
-  // Left and Right step through the calls of a lane, Up and Down go to the call nearest in time
-  // in the next lane that has calls, and Home and End go to the ends of the lane. An arrow at an
+  // Left and Right step through the bars of a lane, Up and Down go to the bar nearest in time
+  // in the next lane that has bars, and Home and End go to the ends of the lane. An arrow at an
   // edge gives null.
   function step(cur, key) {
     const byLane = new Map();
@@ -404,30 +528,30 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
 
   canvas.addEventListener('keydown', (e) => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
-    const cur = (cursor && hits.find((x) => x.c.id === cursor.id)) ?? null;
+    const cur = (cursor && hits.find((x) => x.id === cursor.id)) ?? null;
     if (e.key === 'Enter' || e.key === ' ') {
-      if (!cur) return;
+      if (!cur?.target) return;
       e.preventDefault();
-      onFocusCall(cur.c.id);
+      onFocusCall(cur.target);
       return;
     }
     if (!MOVE_KEYS.has(e.key)) return;
-    // Without calls, or at an edge, the arrow keys scroll the lanes as usual.
+    // Without bars, or at an edge, the arrow keys scroll the lanes as usual.
     const next = cur ? step(cur, e.key) : newest();
     if (!next) return;
     e.preventDefault();
     moveTo(next);
   });
   canvas.addEventListener('focus', () => {
-    if (!cursor || !hits.some((x) => x.c.id === cursor.id)) {
+    if (!cursor || !hits.some((x) => x.id === cursor.id)) {
       const hit = newest();
-      cursor = hit ? { id: hit.c.id, agent: hit.agent.key } : null;
+      cursor = hit ? cursorOf(hit) : null;
     }
     keyFocus = canvas.matches(':focus-visible');
     keyed = keyFocus;
     // A pointer that rests on the lanes would keep its tip over the tip of the cursor.
     if (keyFocus) hover = null;
-    const cur = cursor && hits.find((x) => x.c.id === cursor.id);
+    const cur = cursor && hits.find((x) => x.id === cursor.id);
     if (keyFocus && cur) announce(cur);
     draw();
   });
@@ -448,8 +572,8 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
   canvas.addEventListener('click', (e) => {
     const hit = hitAt(e.offsetX, e.offsetY);
     if (!hit) return;
-    cursor = { id: hit.c.id, agent: hit.agent.key };
-    onFocusCall(hit.c.id);
+    cursor = cursorOf(hit);
+    if (hit.target) onFocusCall(hit.target);
   });
   // The tip is fixed to the viewport, so a scroll of the lanes or of the page moves the bars
   // away from it.

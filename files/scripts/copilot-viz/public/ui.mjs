@@ -96,6 +96,18 @@ export function callState(c) {
   return STATUS_LABEL[c.status] ?? c.status;
 }
 
+export function shellStatus(sh, now) {
+  const took = sh.startedAt != null && sh.endedAt != null ? fmtDur(sh.endedAt - sh.startedAt) : '';
+  let parts;
+  if (sh.status === 'running') parts = ['running', sh.startedAt == null ? '' : fmtDur(now - sh.startedAt)];
+  else if (sh.status === 'done') parts = [sh.exitCode != null ? `exit ${sh.exitCode}` : 'finished', took];
+  else if (sh.status === 'unknown') parts = ['end unknown'];
+  else parts = [STATUS_LABEL[sh.status] ?? sh.status, took];
+  return parts.filter(Boolean).join(' · ');
+}
+
+export const shellName = (sh) => sh.description ?? sh.command ?? `shell ${sh.id}`;
+
 // Everything that a call row shows, so that a list builds a row again only when it changes.
 export const callSig = (c, a) => [c.status, c.startedAt, c.endedAt, c.perm, c.exitCode, c.name, c.summary, c.title, c.category, a?.name, a?.type].join('|');
 

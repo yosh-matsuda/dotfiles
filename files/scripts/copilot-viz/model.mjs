@@ -97,7 +97,9 @@ function newSession(id, ext) {
       effort: null, mode: 'interactive', version: null, startedAt: null, endedAt: null, lastEventAt: null,
       aic: null, premium: null, compactions: 0, batched: false, callCount: 0, generation: 0, errors: 0,
     },
-    agents: new Map(), aliases: new Map(), calls: new Map(), shells: new Map(), shellEnds: new Map(),
+    // shells: by shellId and call, so that a shellId given again keeps the shell before it for the
+    // timeline. shellIds: the newest shell of each shellId, which the tools and notices name.
+    agents: new Map(), aliases: new Map(), calls: new Map(), shells: new Map(), shellIds: new Map(), shellEnds: new Map(),
     perms: new Map(), intents: new Map(), buckets: new Map(), feed: [], feedSeq: 0, truncatedBefore: null,
     replay: false,
   };
@@ -441,11 +443,13 @@ function resetInflight(S, ts, mainStatus) {
     else if (a.status === 'idle') settle(a, 'done', ts);
     else if (!TERMINAL.has(a.status)) settle(a, 'cancelled', ts);
   }
-  // A detached shell can outlive the process, which then never reports its end.
+  // A detached shell can outlive the process, which then never reports its end. lostAt: when the
+  // log stopped telling about it.
   for (const sh of S.shells.values()) {
     if (sh.status !== 'running') continue;
     sh.status = sh.detached ? 'unknown' : 'stopped';
-    if (!sh.detached) sh.endedAt = ts;
+    if (sh.detached) sh.lostAt = ts;
+    else sh.endedAt = ts;
   }
   S.perms.clear();
 }
@@ -473,17 +477,18 @@ function shellKeys(command) {
 }
 
 function shellFor(S, id, c, ts) {
-  let sh = S.shells.get(id);
-  // Agents give the same shellId to a new shell once the one before ended.
+  let sh = S.shellIds.get(id);
+  // Agents give the same shellId to a new shell once the one before ended, which the log may not
+  // have reported.
   if (sh && c && sh.callId !== c.id) {
-    S.shells.delete(id);
+    if (sh.status === 'running') Object.assign(sh, { status: 'done', endedAt: c.startedAt ?? ts });
     sh = null;
   }
   if (!sh) {
     sh = {
       id, agent: c?.agent ?? 'main', callId: c?.id ?? null, description: c?.extra.description ?? null,
       command: c ? firstLine(c.command, TEXT.summary) : null, detached: Boolean(c?.extra.detach),
-      status: 'running', exitCode: null, startedAt: c?.startedAt ?? ts, endedAt: null,
+      status: 'running', exitCode: null, startedAt: c?.startedAt ?? ts, endedAt: null, lostAt: null,
       // For the process check. seenAt: when the log reported the start. keys: the arguments that
       // the process may show. batched: startedAt is the commit time of an auto turn, after the
       // shell started. pid, ticks: the matched process. missedAt: when the check last missed the
@@ -499,10 +504,13 @@ function shellFor(S, id, c, ts) {
     const end = S.shellEnds.get(id);
     S.shellEnds.delete(id);
     if (end && (c?.replayed || end.endedAt >= sh.startedAt)) Object.assign(sh, end);
-    S.shells.set(id, sh);
+    S.shells.set(`${id}\u0000${sh.callId}`, sh);
+    S.shellIds.set(id, sh);
     for (const [k, v] of S.shells) {
       if (S.shells.size <= LIMITS.shells) break;
-      if (v.status !== 'running') S.shells.delete(k);
+      if (v.status === 'running') continue;
+      S.shells.delete(k);
+      if (S.shellIds.get(v.id) === v) S.shellIds.delete(v.id);
     }
   }
   return sh;
@@ -512,7 +520,7 @@ function shellFor(S, id, c, ts) {
 // tool result names shells that it ends too, such as the shell of a sync bash call, which has no
 // start to wait for.
 function endShell(S, id, ts, status, exitCode, early = false) {
-  const sh = S.shells.get(id);
+  const sh = S.shellIds.get(id);
   if (!sh) {
     if (!early) return;
     S.shellEnds.set(id, { status, exitCode: exitCode ?? null, endedAt: ts });
@@ -530,7 +538,7 @@ function endShell(S, id, ts, status, exitCode, early = false) {
 // A command that leaves work in the background ends its own process, while Copilot still reads
 // the output of that work; such a shell keeps running without a process to check.
 function reviveShell(S, id) {
-  const sh = S.shells.get(id);
+  const sh = S.shellIds.get(id);
   if (!sh?.proc.inferred) return;
   Object.assign(sh, { status: 'running', exitCode: null, endedAt: null });
   Object.assign(sh.proc, { inferred: false, watch: false });
@@ -1021,7 +1029,7 @@ function handle(S, ev, home) {
         endShell(S, id, ts, 'done', typeof k.exitCode === 'number' ? k.exitCode : null, true);
         const label = k.description ? `"${k.description}"` : id;
         const code = typeof k.exitCode === 'number' ? ` (exit ${k.exitCode})` : '';
-        pushFeed(S, ts, S.shells.get(id)?.agent ?? 'main', 'notice', oneLine(`Shell ${label} finished${code}`, TEXT.feed));
+        pushFeed(S, ts, S.shellIds.get(id)?.agent ?? 'main', 'notice', oneLine(`Shell ${label} finished${code}`, TEXT.feed));
       } else {
         const m = NOTICE_DONE_RE.exec(typeof d.content === 'string' ? d.content : '');
         const a = m && knownAgent(S, m[1]);

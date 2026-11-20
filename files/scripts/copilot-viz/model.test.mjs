@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createModel, LIMITS } from './model.mjs';
 import { createStore, isDormant } from './public/store.mjs';
+import { lanesOf } from './public/timeline.mjs';
 
 const T0 = Date.parse('2026-01-01T00:00:00Z');
 const at = (sec) => new Date(T0 + sec * 1000).toISOString();
@@ -390,7 +391,11 @@ test('a shellId given again starts a new shell that an older end does not end', 
     ...start(9, 'B2', 'make test', 'gcc'),
     ...start(9, 'B3', 'serve', 'x'),
   ]);
-  assert.deepEqual(view(m, 's').shells.map((x) => [x.id, x.status, x.command]), [['gcc', 'running', 'make test'], ['x', 'running', 'serve']]);
+  assert.deepEqual(view(m, 's').shells.map((x) => [x.id, x.status, x.command]), [['gcc', 'done', 'make'], ['gcc', 'running', 'make test'], ['x', 'running', 'serve']]);
+
+  // The shell before had ended by the time Copilot gave its id to another one.
+  feed(m, 'w', [E(0, 'session.start'), ...start(1, 'B5', 'sleep 99', 'z'), ...start(9, 'B6', 'make', 'z')]);
+  assert.deepEqual(view(m, 'w').shells.map((x) => [x.id, x.callId, x.status, x.endedAt]), [['z', 'B5', 'done', T0 + 9000], ['z', 'B6', 'running', null]]);
 
   // The footer of a sync call ends its own shell, which a later shell with the id must not inherit.
   feed(m, 'v', [
@@ -401,6 +406,43 @@ test('a shellId given again starts a new shell that an older end does not end', 
     ...start(9, 'B4', 'npm run dev', 'srv'),
   ]);
   assert.deepEqual(view(m, 'v').shells.map((x) => [x.id, x.status]), [['srv', 'running']]);
+});
+
+test('the timeline gives background shells lanes under their agent until they end', () => {
+  const m = createModel();
+  const start = (sec, id, shellId, extra = {}) => [
+    E(sec, 'tool.execution_start', { toolCallId: id, toolName: 'bash', arguments: { command: `run ${shellId}`, mode: 'async', shellId, ...extra } }),
+    E(sec + 0.4, 'tool.execution_complete', { toolCallId: id, success: true, result: { content: `<command started in background with shellId: ${shellId}>` } }),
+  ];
+  const done = (sec, shellId) => E(sec, 'system.notification', { kind: { type: 'shell_completed', shellId, exitCode: 0 } });
+  feed(m, 's', [
+    E(0, 'session.start'),
+    ...start(10, 'B1', 'g0'), ...start(10, 'B2', 'g1'),
+    ...start(20, 'B3', 'c'), done(30, 'c'), ...start(60, 'B4', 'c'), done(70, 'c'),
+    ...start(80, 'B5', 'srv', { detach: true }),
+  ]);
+  m.setMeta('s', { alive: true });
+  const lanes = (from, to) => lanesOf(view(m, 's'), T0 + from * 1000, T0 + to * 1000);
+  const names = (from, to) => lanes(from, to).map((l) => l.kind === 'agent' ? l.agent.key : l.shells.map((x) => x.callId).join(' '));
+
+  // Shells that do not overlap share a lane, and a shellId given again keeps the shell before.
+  assert.deepEqual(names(0, 900), ['main', 'B1', 'B2', 'B3 B4 B5']);
+  // The calls that started the running shells have left the window.
+  assert.deepEqual(names(1000, 1900), ['main', 'B1', 'B2', 'B5']);
+  assert.equal(lanes(1000, 1900)[0].calls.length, 0);
+
+  // A restart stops the shells, and the detached one ends where the log lost track of it.
+  feed(m, 's', [E(2000, 'session.resume')]);
+  assert.deepEqual(names(1500, 2400), ['main', 'B1', 'B2', 'B5']);
+  assert.ok(lanes(5000, 5900).every((l) => l.kind === 'agent'));
+
+  // Shells of an auto turn that ended before the commit show where the turn committed, apart.
+  feed(m, 'f', [
+    E(0, 'session.start'), done(6, 'p'), done(7, 'q'),
+    E(400, 'session.fusion_commit_started'), ...start(400, 'F1', 'p'), ...start(400, 'F2', 'q'),
+  ]);
+  const auto = lanesOf(view(m, 'f'), T0 + 100_000, T0 + 400_000);
+  assert.deepEqual(auto.map((l) => l.kind === 'agent' ? l.agent.key : l.shells.map((x) => x.callId).join(' ')), ['main', 'F1', 'F2']);
 });
 
 test('the processes of Copilot end the shells that the log never ends', () => {
