@@ -5,7 +5,10 @@
 // form such as 「計画について 3 点を決めてほしい」 and cannot tell what it asks. Run on `preToolUse`
 // with `matcher: "ask_user"`.
 //
-// A question with one field is mostly a confirmation, such as 「push してよいか」, and is left alone.
+// A question with one field is mostly a confirmation. It passes when its message names the target
+// with a reference, such as 「!52 に auto-merge を設定してよいか」. Without one, a short confirmation
+// such as 「3 件の Issue 下書きを読んで、登録に進めてよいか」 asks about drafts that the model wrote to
+// files and never showed, so it gets the same check.
 // The check denies once per turn, so a question that must stay short costs one retry at most.
 //
 // Every failure exits 0 with no output. `preToolUse` denies the tool on a crash, and a broken
@@ -17,7 +20,8 @@ import { fileURLToPath } from "node:url";
 
 const MIN_EXPLANATION_LETTERS = 40;
 const MIN_MESSAGE_LETTERS = 80;
-const MIN_FIELDS = 2;
+// A merge request or an issue (`!52`, `#12`), a commit hash, or a URL.
+const TARGET_REFERENCE = /[!#]\d+|\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b|https?:\/\//;
 const TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024;
 const RETRY_ATTEMPTS = 8;
 const RETRY_INTERVAL_MS = 250;
@@ -41,9 +45,12 @@ function parse(value) {
 export function lacksExplanation(explanation, args) {
     const schema = parse(args?.requestedSchema) ?? {};
     const fields = Object.keys(schema.properties ?? {}).length;
-    return fields >= MIN_FIELDS
-        && letters(explanation) < MIN_EXPLANATION_LETTERS
-        && letters(args?.message) < MIN_MESSAGE_LETTERS;
+    if (fields === 0
+        || letters(explanation) >= MIN_EXPLANATION_LETTERS
+        || letters(args?.message) >= MIN_MESSAGE_LETTERS) {
+        return false;
+    }
+    return fields > 1 || !TARGET_REFERENCE.test(String(args?.message ?? ""));
 }
 
 // The last top-level assistant message of the turn with a tool call that has not completed, and
@@ -137,9 +144,10 @@ async function onAsk(input) {
             return {
                 permissionDecision: "deny",
                 permissionDecisionReason: DENY_MARK + "質問はまだ表示していない。ユーザーは、自分が書いた"
-                    + "ファイル（plan.md など）、サブエージェントの報告、ツールの出力、compaction の要約を"
-                    + "読んでいない。ask_user を呼ぶ応答の本文に、項目ごとに何を決めるのか、そこに至った"
-                    + "事情、選択肢で何が変わるのか、推奨する選択肢とその理由を書く。そのうえで同じ応答で"
+                    + "ファイル（plan.md や下書きなど）、サブエージェントの報告、ツールの出力、compaction の"
+                    + "要約を読んでいない。ask_user を呼ぶ応答の本文に、項目ごとに何を決めるのか、そこに"
+                    + "至った事情、選択肢で何が変わるのか、推奨する選択肢とその理由を書く。下書きや計画の"
+                    + "承認を求めるなら、その要点を本文に書き、ファイルのパスを示す。そのうえで同じ応答で "
                     + "ask_user をもう一度呼ぶ。項目の title には、本文で説明した言葉を使う。",
             };
         }

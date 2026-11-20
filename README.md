@@ -372,11 +372,13 @@ Subagents write their messages into the parent transcript with an `agentId`, and
 
 `preToolUse` with `matcher: "ask_user"` denies the call when all of these hold:
 
--   The form has two or more fields.
 -   The text of the response that calls `ask_user` has fewer than 40 letters, after code blocks are removed.
 -   The `message` has fewer than 80 letters.
+-   The form has two or more fields, or it has one field and the `message` holds no reference to its target: `!52`, `#12`, a commit hash, or a URL.
 
-The reason tells the agent to explain each field in the text and to call `ask_user` again. The hook denies once per turn, found by its reason in a `tool.execution_complete` after the last `user.message`. A question with one field is mostly a confirmation such as 「push してよいか」 and is left alone. Over 40 days on one machine, 37 of 1445 questions matched, and 8% of those were cancelled against 2% of all questions.
+The reason tells the agent to explain each field in the text, to summarize a draft or a plan that it asks to approve and give its path, and to call `ask_user` again. The hook denies once per turn, found by its reason in a `tool.execution_complete` after the last `user.message`. Over 40 days on one machine, 37 of 1445 questions with two or more fields matched, and 8% of those were cancelled against 2% of all questions.
+
+A question with one field is mostly a confirmation. 「!52 に auto-merge を設定してよいか」 can be answered from the message alone, but 「3 件の Issue 下書きを読んで、GitLab への登録に進めてよいか」 asked about drafts that the model had written to files and never shown. Over 105 days on another machine, 198 of 1551 questions with one field matched; without the reference rule, 407 would have.
 
 The hook reads the message from `~/.copilot/session-state/<sessionId>/events.jsonl` like [Persona name](#persona-name), and lets the call through when it cannot find the message.
 
