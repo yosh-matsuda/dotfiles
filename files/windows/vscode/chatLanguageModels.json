@@ -1,0 +1,11 @@
+[
+    {
+        "name": "Copilot",
+        "vendor": "agent-host-copilotcli",
+        "settings": {
+            "auto": {
+                "tier": "hydrafusion-max"
+            }
+        }
+    }
+]

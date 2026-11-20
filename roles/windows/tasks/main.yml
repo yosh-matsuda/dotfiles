@@ -95,6 +95,17 @@
       loop:
       - settings.json
       - keybindings.json
-      - globalStorage/agent-host-config.json
+      - chatLanguageModels.json
       register: windows_vscode_merge
       changed_when: "'changed' in windows_vscode_merge.stdout"
+
+    # Copilot sessions in the VS Code agent host take these values from VS Code, not from ~/.copilot/settings.json.
+    - name: Apply the Copilot CLI settings to the matching VS Code settings
+      ansible.builtin.command:
+        argv:
+        - node
+        - "{{ windows_scripts_dir }}/copilot-vscode-sync.mjs"
+        - "{{ playbook_dir }}/files/copilot/settings.json"
+        - "{{ windows_vscode_user_dir }}"
+      register: windows_copilot_vscode_sync
+      changed_when: "'changed' in windows_copilot_vscode_sync.stdout"

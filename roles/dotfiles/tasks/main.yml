@@ -248,17 +248,19 @@
 # ~/.copilot/settings.json and read this file of the host they run on instead.
 # The VS Code server writes it, so it is changed only when it already exists.
 # A connected VS Code overwrites the key from chat.agentHost.copilot.includeCoAuthoredBy,
-# which files/windows/vscode/settings.json sets.
+# which files/scripts/copilot-vscode-sync.mjs sets on Windows from the same CLI key.
+# That script maps the keys on Windows, but node is not on every host, so they are listed here too.
 - name: Read the agent host config of the VS Code server
   ansible.builtin.slurp:
     src: "{{ home_dir }}/.vscode-server/data/User/globalStorage/agent-host-config.json"
   register: dotfiles_vscode_agent_host_config_live
   failed_when: false
 
-- name: Merge tracked keys into the agent host config of the VS Code server
+- name: Merge Copilot CLI settings into the agent host config of the VS Code server
   vars:
     dotfiles_vscode_agent_host_config_current: "{{ dotfiles_vscode_agent_host_config_live.content | b64decode | from_json }}"
-    dotfiles_vscode_agent_host_config_merged: "{{ dotfiles_vscode_agent_host_config_current | combine(lookup('file', playbook_dir ~ '/files/windows/vscode/globalStorage/agent-host-config.json') | from_json) }}"
+    dotfiles_vscode_agent_host_config_tracked: "{{ lookup('file', playbook_dir ~ '/files/copilot/settings.json') | from_json | dict2items | selectattr('key', 'in', ['includeCoAuthoredBy']) | items2dict }}"
+    dotfiles_vscode_agent_host_config_merged: "{{ dotfiles_vscode_agent_host_config_current | combine(dotfiles_vscode_agent_host_config_tracked) }}"
   when:
     - "'content' in dotfiles_vscode_agent_host_config_live"
     - dotfiles_vscode_agent_host_config_merged != dotfiles_vscode_agent_host_config_current
