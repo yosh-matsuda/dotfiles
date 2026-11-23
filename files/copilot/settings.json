@@ -46,7 +46,7 @@
     ]
   },
   "includeCoAuthoredBy": false,
-  "model": "gpt-6.2-astra",
+  "model": "claude-opus-5.5",
   "pinnedPrompts": true,
   "showReasoning": false,
   "statusLine": {
@@ -74,7 +74,7 @@
       "rubber-duck": {
         "autoInvoke": true,
         "effortLevel": "high",
-        "model": "claude-opus-5.5"
+        "model": "gpt-6.2-astra"
       },
       "security-review": {
         "contextTier": "default",
