@@ -15,6 +15,10 @@ const MOVE_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'H
 const SHELL_LANES = 4;
 const SHELL_PATH = 'M4 6l5 5-5 5M12 17h8';
 
+export function canvasRatio(w, height, dpr) {
+  return Math.min(dpr, Math.sqrt(16_777_216 / (w * height)), 32_767 / height);
+}
+
 function windowLabel(minutes) {
   return minutes % 60 ? `${minutes} minutes` : minutes === 60 ? 'hour' : `${minutes / 60} hours`;
 }
@@ -159,9 +163,9 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
     drawnEnd = end;
     const lanes = s ? lanesOf(s, from, end) : [];
     const height = AXIS + Math.max(1, lanes.length) * LANE + PAD;
-    const dpr = window.devicePixelRatio || 1;
-    const pw = Math.round(w * dpr);
-    const ph = Math.round(height * dpr);
+    const dpr = canvasRatio(w, height, window.devicePixelRatio || 1);
+    const pw = Math.max(1, Math.floor(w * dpr));
+    const ph = Math.max(1, Math.floor(height * dpr));
     if (canvas.width !== pw) canvas.width = pw;
     if (canvas.height !== ph) canvas.height = ph;
     if (canvas.style.height !== `${height}px`) canvas.style.height = `${height}px`;
@@ -570,6 +574,9 @@ export function createTimeline(canvas, wrap, tip, probe, say, { onFocusCall }) {
     showTip();
   });
   canvas.addEventListener('click', (e) => {
+    hover = null;
+    keyed = false;
+    showTip();
     const hit = hitAt(e.offsetX, e.offsetY);
     if (!hit) return;
     cursor = cursorOf(hit);

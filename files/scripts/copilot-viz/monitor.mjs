@@ -29,6 +29,8 @@ export function copilotHome(env = process.env) {
   return env.COPILOT_HOME || join(homedir(), '.copilot');
 }
 
+export const validSessionId = (id) => typeof id === 'string' && id.length > 0 && id.length <= 200 && !id.includes('/') && !id.startsWith('.');
+
 // Copilot runs as its own binary, or as a script of node, bun, or deno. Options of the runner,
 // with or without a value, and its subcommands may come before the script, so any argument may
 // name it. The hold file, not the arguments, tells Copilot from a process that reused its PID.
@@ -48,20 +50,30 @@ async function holdsFile(pid, path) {
   return false;
 }
 
+// ps prints elapsed time as [[days-]hours:]minutes:seconds, rounded to seconds.
+export function psOwnsLock(output, lockMtime, now) {
+  const m = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d{2})\s+(.+)$/s.exec(output.trim());
+  if (!m) return null;
+  const seconds = ((Number(m[1] ?? 0) * 24 + Number(m[2] ?? 0)) * 60 + Number(m[3])) * 60 + Number(m[4]);
+  return now - seconds * 1000 <= lockMtime + 2000 && COPILOT_ARGS.test(m[5]);
+}
+
 // true, false, or null when the process cannot be checked.
-async function runsCopilot(pid, dir) {
+async function runsCopilot(pid, dir, lockMtime) {
   if (HAS_PROC) {
     let argv;
     try {
+      if ((await stat(`/proc/${pid}`)).uid !== process.getuid()) return false;
       argv = (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0');
     } catch (e) {
       return e.code === 'ENOENT' || e.code === 'ESRCH' ? false : null;
     }
     if (!isCopilotArgv(argv)) return false;
-    const hold = await realpath(join(dir, `inuse.${pid}.hold`)).catch(() => null);
-    // Without a hold file, the arguments are all there is to check.
-    if (hold === null) return true;
-    return holdsFile(pid, hold);
+    try {
+      return holdsFile(pid, await realpath(join(dir, `inuse.${pid}.hold`)));
+    } catch (e) {
+      return e.code === 'ENOENT' ? true : null;
+    }
   }
   try {
     process.kill(pid, 0);
@@ -70,9 +82,9 @@ async function runsCopilot(pid, dir) {
     return e.code === 'ESRCH' || e.code === 'EPERM' ? false : null;
   }
   return new Promise((resolve) => {
-    execFile('ps', ['-o', 'args=', '-p', String(pid)], { timeout: 2000 }, (err, out) => {
+    execFile('ps', ['-o', 'etime=,args=', '-p', String(pid)], { timeout: 2000 }, (err, out) => {
       if (err) resolve(err.code === 1 ? false : null);
-      else resolve(COPILOT_ARGS.test(out.trim()));
+      else resolve(psOwnsLock(out, lockMtime, Date.now()));
     });
   });
 }
@@ -114,7 +126,8 @@ export function parseDuration(text) {
   const m = /^(\d+(?:\.\d+)?)\s*([smhdw]?)$/i.exec(String(text ?? '').trim());
   if (!m) return null;
   const unit = { s: 1e3, m: 6e4, h: 36e5, d: 864e5, w: 6048e5 }[(m[2] || 'h').toLowerCase()];
-  return Number(m[1]) * unit;
+  const ms = Number(m[1]) * unit;
+  return Number.isFinite(ms) ? ms : null;
 }
 
 // Reads the top-level scalars of workspace.yaml: plain, quoted, and block scalars.
@@ -133,12 +146,12 @@ export function parseWorkspaceYaml(text) {
 }
 
 function scalar(head, more) {
-  const block = /^([|>])([-+]?)\d*$/.exec(head);
+  const block = /^([|>])(?:([-+])\d*|\d+([-+]?))?$/.exec(head);
   if (block) {
     const indent = Math.min(...more.filter((l) => l.trim()).map((l) => l.length - l.trimStart().length));
     const body = more.map((l) => (l.trim() ? l.slice(indent) : ''));
     const text = block[1] === '|' ? body.join('\n') : body.join('\n').replace(/([^\n])\n(?=[^\n])/g, '$1 ');
-    return block[2] === '-' ? text : `${text}\n`;
+    return (block[2] ?? block[3]) === '-' ? text : `${text}\n`;
   }
   const flat = [head, ...more.map((l) => l.trim())].join(' ');
   if (flat.startsWith("'")) {
@@ -193,18 +206,34 @@ export function createMonitor({
     let st;
     try {
       st = await stat(dir);
-    } catch {
-      return false;
+    } catch (e) {
+      return e.code === 'ENOENT' || e.code === 'ENOTDIR' ? false : null;
     }
     let c = locks.get(sid);
     if (!c || c.mtime !== st.mtimeMs || now() - c.checkedAt > LOCK_RECHECK_MS) {
-      const names = await readdir(dir).catch(() => []);
-      c = { mtime: st.mtimeMs, checkedAt: now(), pids: names.map((n) => LOCK_RE.exec(n)?.[1]).filter(Boolean).map(Number) };
+      let names;
+      try {
+        names = await readdir(dir);
+      } catch (e) {
+        return e.code === 'ENOENT' || e.code === 'ENOTDIR' ? false : null;
+      }
+      c = { mtime: st.mtimeMs, checkedAt: now(), rejected: c?.rejected, pids: names.map((n) => LOCK_RE.exec(n)?.[1]).filter(Boolean).map(Number) };
       locks.set(sid, c);
     }
     let alive = false;
     for (const pid of c.pids) {
-      const v = await runsCopilot(pid, dir);
+      let lockMtime;
+      if (!HAS_PROC) {
+        try {
+          lockMtime = (await stat(join(dir, `inuse.${pid}.lock`))).mtimeMs;
+        } catch (e) {
+          if (e.code !== 'ENOENT') alive = null;
+          continue;
+        }
+        if (c.rejected?.get(pid) === lockMtime) continue;
+      }
+      const v = await runsCopilot(pid, dir, lockMtime);
+      if (!HAS_PROC && v === false) (c.rejected ??= new Map()).set(pid, lockMtime);
       if (v === true) {
         c.pid = pid;
         return true;
@@ -223,12 +252,12 @@ export function createMonitor({
       return;
     }
     if (st.mtimeMs === tr.yamlMtime) return;
-    tr.yamlMtime = st.mtimeMs;
     try {
       const y = parseWorkspaceYaml(await readFile(path, 'utf8'));
+      tr.yamlMtime = st.mtimeMs;
       model.setMeta(tr.sid, { name: firstLine(y.name, 200), client: y.last_client_name || y.client_name || null });
     } catch (e) {
-      onError?.(e);
+      if (e.code !== 'ENOENT') onError?.(e);
     }
   }
 
@@ -246,7 +275,7 @@ export function createMonitor({
     const procsOf = new Map();
     for (const ent of entries) {
       if (stopped) return;
-      if (!ent.isDirectory() || ent.name.startsWith('.')) continue;
+      if (!ent.isDirectory() || !validSessionId(ent.name)) continue;
       const sid = ent.name;
       const dir = join(stateDir, sid);
       let st;
@@ -260,7 +289,7 @@ export function createMonitor({
       if (alive !== true && now() - st.mtimeMs > sinceMs) continue;
       let tr = trackers.get(sid);
       if (!tr) {
-        tr = { sid, dir, path: join(dir, 'events.jsonl'), ino: null, pos: 0, tail: NO_BYTES, seenMtime: null, rewrittenMtime: null, partial: [], partialLen: 0, skip: false, busy: false, gone: false, yamlMtime: null, mtime: 0, alive: null };
+        tr = { sid, dir, path: join(dir, 'events.jsonl'), ino: null, goal: null, loaded: false, pos: 0, tail: NO_BYTES, seenMtime: null, rewrittenMtime: null, partial: [], partialLen: 0, skip: false, busy: false, gone: false, yamlMtime: null, mtime: 0, alive: null };
         trackers.set(sid, tr);
       }
       tr.mtime = st.mtimeMs;
@@ -346,7 +375,7 @@ export function createMonitor({
       fh = await open(tr.path, 'r');
       const fst = await fh.stat();
       // A replaced, truncated, or rewritten log starts over.
-      let reset = tr.ino !== null && (fst.ino !== tr.ino || fst.size < tr.pos);
+      let reset = tr.ino !== null && (fst.ino !== tr.ino || fst.size < tr.pos || (!tr.loaded && fst.size < tr.goal));
       if (!reset && tr.tail.length) {
         const seen = Buffer.alloc(tr.tail.length);
         const { bytesRead } = await fh.read(seen, 0, seen.length, tr.pos - seen.length);
@@ -367,8 +396,10 @@ export function createMonitor({
       if (reset) {
         model.resetSession(tr.sid);
         counts.resets++;
-        Object.assign(tr, { pos: 0, tail: NO_BYTES, partial: [], partialLen: 0, skip: false });
+        Object.assign(tr, { goal: null, loaded: false, pos: 0, tail: NO_BYTES, partial: [], partialLen: 0, skip: false });
       }
+      tr.goal ??= fst.size;
+      if (tr.goal === 0) tr.loaded = true;
       tr.ino = fst.ino;
       tr.seenMtime = fst.mtimeMs;
       const buf = Buffer.allocUnsafe(Math.min(chunkSize, Math.max(fst.size - tr.pos, 1)));
@@ -380,10 +411,11 @@ export function createMonitor({
         tr.tail = keepTail(tr.tail, chunk);
         counts.bytes += bytesRead;
         feedBytes(tr, chunk);
+        if (tr.pos >= tr.goal) tr.loaded = true;
         if (tr.pos < fst.size) await yieldNow();
       }
     } catch (e) {
-      onError?.(e);
+      if (e.code !== 'ENOENT') onError?.(e);
     } finally {
       await fh?.close().catch(() => {});
       tr.busy = false;
@@ -438,6 +470,7 @@ export function createMonitor({
       for (const t of timers) clearTimeout(t);
       timers.clear();
     },
+    loaded: (sid) => trackers.get(sid)?.loaded === true,
     get ready() { return ready; },
     stats: () => ({ ...counts, sessions: trackers.size }),
   };

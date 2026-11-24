@@ -14,7 +14,6 @@ export function createFeed(feedEl, jumpBtn, { onFocusAgent, onFocusCall }) {
   const empty = h('p', { class: 'empty', text: 'No activity yet.' });
   let shown;
   let stick = true;
-  let lastKey = null;
 
   const nearBottom = () => feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < NEAR_BOTTOM;
   feedEl.addEventListener('scroll', () => {
@@ -50,7 +49,6 @@ export function createFeed(feedEl, jumpBtn, { onFocusAgent, onFocusCall }) {
     cache.clear();
     feedEl.replaceChildren();
     stick = true;
-    lastKey = null;
     jumpBtn.hidden = true;
   }
 
@@ -62,7 +60,10 @@ export function createFeed(feedEl, jumpBtn, { onFocusAgent, onFocusCall }) {
         reset();
         shown = key;
       }
-      if (!s) return;
+      if (!s) {
+        if (!empty.isConnected) feedEl.replaceChildren(empty);
+        return;
+      }
       const agents = new Map(s.agents.map((a) => [a.key, a]));
       const list = [];
       let ts = 0;
@@ -75,13 +76,15 @@ export function createFeed(feedEl, jumpBtn, { onFocusAgent, onFocusCall }) {
       }
       list.sort((x, y) => x.ts - y.ts);
       const entries = list.slice(-KEEP).map((e) => {
-        const a = agents.get(e.f?.agent ?? e.c.agent);
-        const sig = e.f ? [e.f.kind, e.f.agent, a?.name, a?.type].join('|') : callSig(e.c, a);
+        const a = agents.get(e.f ? e.f.agent : e.c.agent);
+        const sig = e.f ? JSON.stringify([e.f.kind, e.f.agent, e.f.text, e.f.ts, a?.kind, a?.name, a?.type]) : callSig(e.c, a);
         return { ...e, a, sig };
       });
 
       if (!entries.length) {
         if (!empty.isConnected) {
+          jumpBtn.hidden = true;
+          stick = true;
           cache.clear();
           feedEl.replaceChildren(empty);
         }
@@ -89,14 +92,13 @@ export function createFeed(feedEl, jumpBtn, { onFocusAgent, onFocusCall }) {
       }
       empty.remove();
       const follow = stick;
-      reconcile(feedEl, entries, cache, (e) => {
+      const changed = reconcile(feedEl, entries, cache, (e) => {
         if (e.c) return callRow(e.c, e.a, onFocusCall);
         return NOTES.has(e.f.kind) ? note(e.f, e.a) : message(e.f, e.a);
       });
-      const newest = entries.at(-1).key;
+      if (!changed) return;
       if (follow) feedEl.scrollTop = feedEl.scrollHeight;
-      else if (newest !== lastKey) jumpBtn.hidden = false;
-      lastKey = newest;
+      else jumpBtn.hidden = false;
     },
   };
 }

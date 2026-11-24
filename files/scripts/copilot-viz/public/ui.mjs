@@ -109,12 +109,12 @@ export function shellStatus(sh, now) {
 export const shellName = (sh) => sh.description ?? sh.command ?? `shell ${sh.id}`;
 
 // Everything that a call row shows, so that a list builds a row again only when it changes.
-export const callSig = (c, a) => [c.status, c.startedAt, c.endedAt, c.perm, c.exitCode, c.name, c.summary, c.title, c.category, a?.name, a?.type].join('|');
+export const callSig = (c, a) => JSON.stringify([c.status, c.startedAt, c.endedAt, c.perm, c.exitCode, c.name, c.summary, c.title, c.category, a?.key, a?.kind, a?.name, a?.type]);
 
 export function callRow(c, a, onClick) {
   const what = c.summary ?? c.title ?? '';
   return h('button', {
-    class: 'call', type: 'button', 'data-cat': c.category, 'data-status': c.status, onclick: () => onClick(c.id),
+    class: 'call', type: 'button', 'data-focus-key': `call:${c.id}`, 'data-cat': c.category, 'data-status': c.status, onclick: () => onClick(c.id),
     title: [c.name, what, a?.name && `by ${a.name}`].filter(Boolean).join('\n'),
   }, a ? avatar(a, 'mini') : h('span'), icon(c.category),
   h('span', { class: 'call-text' }, h('span', { class: 'call-name', text: c.name }), ' ', what),
@@ -229,9 +229,11 @@ export function move(parent, el, before) {
 // changed is built again.
 export function reconcile(parent, entries, cache, build) {
   const active = parent.contains(document.activeElement) ? document.activeElement : null;
+  let changed = false;
   const keep = new Set(entries.map((e) => e.key));
   for (const [k, c] of cache) {
     if (keep.has(k)) continue;
+    changed = true;
     c.el.remove();
     cache.delete(k);
   }
@@ -239,6 +241,7 @@ export function reconcile(parent, entries, cache, build) {
   for (const e of entries) {
     let c = cache.get(e.key);
     if (!c || c.sig !== e.sig) {
+      changed = true;
       const el = build(e);
       if (c) {
         succeed(c.el, el);
@@ -248,8 +251,12 @@ export function reconcile(parent, entries, cache, build) {
       cache.set(e.key, c);
     }
     const at = parent.children[i];
-    if (at !== c.el) move(parent, c.el, at ?? null);
+    if (at !== c.el) {
+      changed = true;
+      move(parent, c.el, at ?? null);
+    }
     i++;
   }
   restore(active);
+  return changed;
 }

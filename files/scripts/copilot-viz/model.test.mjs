@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createModel, LIMITS } from './model.mjs';
+import { createModel, HANDLED_TYPES, LIMITS } from './model.mjs';
 import { createStore, isDormant } from './public/store.mjs';
 import { lanesOf } from './public/timeline.mjs';
 
@@ -643,6 +643,9 @@ test('an ended agent shows its end over its open question or approval', () => {
   let s = view(m, 's');
   assert.deepEqual([agent(s, 'tc:T').display, agent(s, 'tc:U').display], ['failed', 'done']);
   assert.notEqual(s.state, 'attention');
+  assert.deepEqual([call(s, 'Q').status, call(s, 'V').status], ['interrupted', 'unknown']);
+  assert.equal(agent(s, 'tc:T').phases.at(-1).end, T0 + 3000);
+  assert.equal(agent(s, 'tc:U').phases.at(-1).end, T0 + 7000);
   m.setMeta('s', { alive: false });
   s = view(m, 's');
   assert.deepEqual([agent(s, 'tc:T').display, agent(s, 'tc:U').display], ['failed', 'done']);
@@ -691,4 +694,234 @@ test('a client that starts from any snapshot and applies the deltas ends with th
   for (const c of clients) {
     assert.equal(JSON.stringify([...c.sessions.values()].sort((a, b) => a.id.localeCompare(b.id))), final);
   }
+});
+
+const startCall = (sec, id, name, args, agentId) => E(sec, 'tool.execution_start', {
+  toolCallId: id, toolName: name, arguments: args,
+}, agentId);
+const finishCall = (sec, id, text, success = true) => E(sec, 'tool.execution_complete', {
+  toolCallId: id, result: { content: text }, success,
+});
+const permission = (sec, requestId, agentId) => E(sec, 'permission.requested', { requestId }, agentId);
+
+test('configuration before a task link survives started and applies only to background turns', () => {
+  const m = createModel();
+  for (const mode of ['sync', 'background']) {
+    feed(m, mode, [
+      E(1, 'subagent.configured', { multiTurn: true, reasoningEffort: 'high' }, 'A'),
+      E(2, 'subagent.started', { toolCallId: 'T', executionMode: mode, resumable: false }, 'A'),
+      startCall(3, 'Q', 'ask_user', {}, 'A'), permission(4, 'p', 'A'),
+      E(5, 'subagent.completed', { toolCallId: 'T' }, 'A'),
+    ]);
+    const a = agent(view(m, mode), 'tc:T');
+    assert.equal(a.effort, 'high');
+    assert.equal(a.display, mode === 'sync' ? 'done' : 'idle');
+    assert.equal(a.current, null);
+  }
+  feed(m, 'background', [startCall(6, 'W', 'write_agent', { agent_id: 'A' }), finishCall(7, 'W', '')]);
+  assert.equal(agent(view(m, 'background'), 'tc:T').display, 'running');
+});
+
+test('late background completion preserves failure and cancellation', () => {
+  const m = createModel();
+  for (const status of ['failed', 'cancelled']) {
+    feed(m, status, [
+      E(1, 'subagent.started', { toolCallId: 'T', executionMode: 'background', resumable: true }, 'A'),
+      status === 'failed' ? E(2, 'subagent.failed', {}, 'A') : E(2, 'subagent.completed', { cancelled: true }, 'A'),
+      E(3, 'subagent.completed', {}, 'A'),
+    ]);
+    assert.equal(agent(view(m, status), 'tc:T').status, status);
+  }
+});
+
+test('a fork includes the copied main phases without rebasing an ordinary delayed event', () => {
+  const m = createModel();
+  feed(m, 'fork', [E(60, 'session.start'), E(1, 'user.message'), E(4, 'assistant.turn_end'),
+    E(8, 'user.message'), E(61, 'user.message'), E(62, 'session.info', { infoType: 'fork' }), E(63, 'session.resume')]);
+  const s = view(m, 'fork');
+  assert.equal(s.meta.startedAt, T0 + 1000);
+  assert.deepEqual(agent(s, 'main').phases.map((p) => [p.state, (p.start - T0) / 1000, p.end && (p.end - T0) / 1000]),
+    [['thinking', 1, 4], ['idle', 4, 8], ['thinking', 8, 60], ['idle', 60, 61], ['thinking', 61, 63], ['idle', 63, null]]);
+  feed(m, 'normal', [E(20, 'session.start'), E(19.9, 'user.message'), E(22, 'assistant.turn_end')]);
+  assert.equal(view(m, 'normal').meta.startedAt, T0 + 20000);
+  assert.deepEqual(agent(view(m, 'normal'), 'main').phases, [{ state: 'idle', start: T0 + 20000, end: null }]);
+});
+
+test('fusion completion settles only its own live main work', () => {
+  const m = createModel();
+  for (const outcome of ['success', 'failed', 'aborted', 'superseded', 'newFusion']) {
+    feed(m, outcome, [E(1, 'session.fusion_resolved', { fusionId: 'f' }), E(2, 'user.message'),
+      hook(3, 'agentStop', {}), E(4, 'session.fusion_commit_started', { fusionId: 'f' }),
+      hook(5, 'preToolUse', { toolCalls: [{ id: 'B', name: 'bash' }] })]);
+    if (outcome === 'aborted') m.ingest(outcome, E(6, 'abort'));
+    if (outcome === 'superseded') feed(m, outcome, [E(6, 'user.message'), startCall(7, 'N', 'view')]);
+    if (outcome === 'newFusion') feed(m, outcome, [E(6, 'abort'), E(6, 'session.fusion_resolved', { fusionId: 'g' }),
+      E(7, 'user.message'), E(7, 'session.fusion_commit_started', { fusionId: 'g' }), startCall(7, 'N', 'view')]);
+    m.ingest(outcome, E(8, 'session.fusion_completed', { fusionId: 'f', outcome }));
+    const s = view(m, outcome);
+    assert.equal(agent(s, 'main').display, { success: 'idle', failed: 'failed', aborted: 'cancelled', superseded: 'running', newFusion: 'running' }[outcome]);
+    if (outcome === 'superseded' || outcome === 'newFusion') assert.equal(call(s, 'N').status, 'running');
+    else assert.notEqual(call(s, 'B').status, 'running');
+  }
+});
+
+test('a session error ends replay and clears interrupted main work', () => {
+  const m = createModel();
+  feed(m, 's', [startCall(1, 'B', 'bash'), finishCall(2, 'B', '<command started in background with shellId: b>'),
+    startCall(3, 'Q', 'ask_user'), permission(4, 'p'), E(5, 'session.fusion_commit_started'), E(6, 'session.error')]);
+  assert.equal(m.wantsShellCheck('s'), true);
+  assert.equal(call(view(m, 's'), 'Q').status, 'interrupted');
+  m.ingest('s', E(7, 'user.message'));
+  assert.equal(agent(view(m, 's'), 'main').display, 'running');
+});
+
+test('a human answer ends the input phase before the committed outcome arrives', () => {
+  const m = createModel();
+  const answer = (sec) => E(sec, 'human_response.recorded', { requestId: 'r', toolCallId: 'Q', actor: 'human_response', response: {} });
+  feed(m, 's', [hook(1, 'preToolUse', { toolCalls: [{ id: 'Q', name: 'ask_user' }] }), answer(2)].filter((ev) => HANDLED_TYPES.has(ev.type)));
+  const s = view(m, 's');
+  assert.equal(call(s, 'Q').status, 'ok');
+  assert.equal(agent(s, 'main').phases.at(-1).state, 'thinking');
+  feed(m, 's', [finishCall(3, 'Q', 'failed', false), answer(4)]);
+  assert.equal(call(view(m, 's'), 'Q').status, 'failed');
+});
+
+test('only a shell marker on the final line follows partial stdout', () => {
+  const m = createModel();
+  const marker = '<command with shellId: b is still running after 30 seconds>';
+  feed(m, 's', [startCall(1, 'A', 'bash'), finishCall(2, 'A', `${marker}\nmore`),
+    startCall(3, 'B', 'bash'), finishCall(4, 'B', `progress\n${marker}`)]);
+  assert.deepEqual(view(m, 's').shells.map((s) => s.callId), ['B']);
+});
+
+test('a raw patch names the edited file in the call summary', () => {
+  const m = createModel();
+  m.ingest('s', startCall(1, 'P', 'apply_patch', '*** Begin Patch\n*** Update File: src/example.js\n@@\n-x\n+y\n*** End Patch'));
+  assert.equal(call(view(m, 's'), 'P').summary, 'src/example.js');
+});
+
+test('abort follows sync task children but leaves a background subtree alone', () => {
+  const m = createModel();
+  for (const [id, mode, parent] of [['S', 'sync'], ['X', 'sync', 'S'], ['B', 'background'], ['Y', 'sync', 'B']]) {
+    feed(m, 's', [startCall(1, id, 'task', { mode }, parent), E(2, 'subagent.started', { toolCallId: id }, id),
+      startCall(3, `Q${id}`, 'ask_user', {}, id), permission(4, `p${id}`, id)]);
+  }
+  m.ingest('s', E(6, 'abort'));
+  const s = view(m, 's');
+  for (const id of ['S', 'X', 'B', 'Y']) {
+    const a = agent(s, `tc:${id}`);
+    if (id === 'S' || id === 'X') {
+      assert.equal(a.status, 'cancelled');
+      assert.equal(call(s, `Q${id}`).status, 'interrupted');
+      assert.equal(a.phases.at(-1).end, T0 + 6000);
+    } else {
+      assert.equal(a.display, 'input');
+      assert.equal(a.phases.at(-1).end, null);
+    }
+  }
+});
+
+test('permissions follow a placeholder and stop waiting at a turn boundary', () => {
+  const m = createModel();
+  feed(m, 's', [permission(1, 'p', 'A'), E(2, 'subagent.started', { toolCallId: 'T' }, 'A')]);
+  assert.equal(agent(view(m, 's'), 'tc:T').display, 'waiting');
+  m.ingest('s', E(3, 'permission.completed', { requestId: 'p' }));
+  assert.equal(agent(view(m, 's'), 'tc:T').display, 'running');
+  for (const end of [hook(5, 'agentStop', {}), E(5, 'abort')]) {
+    feed(m, 's', [E(4, 'user.message'), permission(4, 'unknown'), end, E(6, 'user.message')]);
+    assert.equal(agent(view(m, 's'), 'main').display, 'running');
+  }
+});
+
+test('numeric and string call references join and malformed IDs create no calls', () => {
+  const m = createModel();
+  feed(m, 's', [hook(1, 'preToolUse', { toolCalls: [{ id: 0, name: 'view' }, { id: {}, name: 'bash' }] }),
+    E(2, 'permission.requested', { requestId: 'p', permissionRequest: { toolCallId: 0 } }),
+    E(3, 'tool.execution_start', { toolCallId: 42, toolName: 'ask_user', parentToolCallId: 7 }),
+    E(4, 'human_response.recorded', { toolCallId: '42' }), finishCall(5, '0', ''), startCall(6, [], 'bash')]);
+  const s = view(m, 's');
+  assert.deepEqual(s.calls.map((c) => [c.id, c.agent, c.status]), [['0', 'main', 'ok'], ['42', 'tc:7', 'ok']]);
+});
+
+test('failed shell controls and truncated read output do not end a running shell', () => {
+  const m = createModel();
+  const wrapper = 'Output too large to read at once (32 KB). Saved to: output.txt\nPreview (first 500 chars):\npartial';
+  feed(m, 's', [startCall(1, 'B', 'bash'), finishCall(2, 'B', '<command started in background with shellId: b>')]);
+  for (const [name, text, ok] of [['read_bash', '', false], ['stop_bash', '', false], ['read_bash', wrapper, true], ['stop_bash', wrapper, true]]) {
+    const id = name + ok;
+    feed(m, 's', [startCall(3, id, name, { shellId: 'b' }), finishCall(4, id, text, ok)]);
+    assert.equal(view(m, 's').shells[0].status, 'running');
+  }
+  feed(m, 's', [startCall(5, 'R', 'read_bash', { shellId: 'b' }), finishCall(6, 'R', `${wrapper}\n<shellId: b completed with exit code 1>`)]);
+  assert.equal(view(m, 's').shells[0].exitCode, 1);
+});
+
+test('committed arguments fill call details after a live call received an intent', () => {
+  const m = createModel();
+  feed(m, 's', [hook(1, 'preToolUse', { toolCalls: [{ id: 'B', name: 'bash' }] }), E(2, 'session.fusion_commit_started'),
+    E(3, 'assistant.message', { toolRequests: [{ toolCallId: 'B', intentionSummary: 'Inspect' }] }),
+    startCall(4, 'B', 'bash', { command: 'pwd', description: 'Show directory' })]);
+  const d = m.callDetail('s', 'B');
+  assert.deepEqual([d.summary, d.intent, d.command], ['Show directory', 'Inspect', 'pwd']);
+});
+
+test('a turn with no assistant message does not inherit the previous tool requests', () => {
+  const m = createModel();
+  feed(m, 's', [E(1, 'assistant.turn_start'), E(2, 'assistant.message', { toolRequests: [{ toolCallId: 'T' }] }),
+    E(3, 'assistant.turn_end'), E(4, 'assistant.turn_start'), E(5, 'assistant.turn_end')]);
+  assert.equal(agent(view(m, 's'), 'main').status, 'idle');
+});
+
+test('a burst of concurrent calls is trimmed as the calls end', () => {
+  const m = createModel();
+  for (let i = 0; i < LIMITS.calls + 2; i++) m.ingest('s', startCall(1, `C${i}`, 'view'));
+  feed(m, 's', [finishCall(2, 'C1', ''), finishCall(3, 'C2', '')]);
+  const s = view(m, 's');
+  assert.equal(s.calls.length, LIMITS.calls);
+  assert.ok(s.calls.every((c) => c.status === 'running'));
+});
+
+test('the main turn timer follows main prompts even after the feed drops them', () => {
+  const m = createModel();
+  m.ingest('s', E(0, 'session.start'));
+  assert.equal(agent(view(m, 's'), 'main').turnStartedAt, null);
+  feed(m, 's', [E(1, 'user.message'), E(3, 'user.message'), E(4, 'user.message', {}, 'A'),
+    E(4, 'user.message', { parentToolCallId: 'T' }), E(5, 'assistant.turn_start')]);
+  for (let i = 0; i <= LIMITS.feed; i++) m.ingest('s', E(6, 'assistant.message', { content: 'working' }));
+  assert.equal(agent(view(m, 's'), 'main').turnStartedAt, T0 + 3000);
+});
+
+test('invalid log times and numbers do not invalidate a browser snapshot', () => {
+  const m = createModel();
+  feed(m, 's', [
+    { ...E(0, 'session.start', { context: { cwd: {} }, startTime: -1e18 }), timestamp: 1e18 },
+    { ...E(0, 'user.message', { content: 'hello' }), timestamp: -1e18 },
+    E(1, 'session.usage_checkpoint', { totalNanoAiu: 2e9, totalPremiumRequests: 1 }),
+    E(2, 'session.usage_checkpoint', { totalNanoAiu: Infinity, totalPremiumRequests: NaN }),
+    E(3, 'session.usage_record', { inputTokens: Infinity, outputTokens: Number.MAX_VALUE }),
+    E(4, 'session.usage_record', { inputTokens: 7, outputTokens: Number.MAX_VALUE }),
+    E(5, 'subagent.completed', { totalToolCalls: Infinity, totalTokens: NaN, durationMs: 'unknown' }, 'A'),
+    startCall(6, 'B', 'bash'),
+    E(7, 'tool.execution_complete', { toolCallId: 'B', shellExecution: { exitCode: NaN }, result: '<command started in background with shellId: b>' }),
+    E(8, 'system.notification', { kind: { type: 'shell_completed', shellId: 'b', exitCode: Infinity } }),
+    E(9, 'session.shutdown', { accountingSnapshot: { totalNanoAiu: Infinity } }),
+  ]);
+  const snap = m.snapshot();
+  assert.equal(createStore().apply({ type: 'snapshot', ...snap }), true);
+  const [s] = snap.sessions;
+  assert.deepEqual([s.feed[0].ts, s.meta.startedAt, s.meta.cwd, s.meta.aic, s.meta.premium], [null, null, null, 2, 1]);
+  assert.deepEqual(agent(s, 'main').tokens, { input: 7, output: Number.MAX_VALUE, cacheRead: 0 });
+  const a = agent(s, 'aid:A');
+  assert.deepEqual([a.toolCount, a.reportedTokens, a.durationMs, call(s, 'B').exitCode, s.shells[0].exitCode], [0, null, null, null, null]);
+});
+
+test('fusion routing between a prompt hook and its message still owns the prompt', () => {
+  const m = createModel();
+  feed(m, 's', [E(0, 'session.start', { selectedModel: 'auto' }), hook(1, 'userPromptSubmitted', {}),
+    E(2, 'session.fusion_resolved', { fusionId: 'f' }), E(3, 'user.message', { content: 'go' }),
+    hook(4, 'preToolUse', { toolCalls: [{ id: 'B', name: 'bash' }] }),
+    E(5, 'session.fusion_completed', { fusionId: 'f', outcome: 'failed' })]);
+  const s = view(m, 's');
+  assert.equal(agent(s, 'main').status, 'failed');
+  assert.equal(call(s, 'B').status, 'interrupted');
 });

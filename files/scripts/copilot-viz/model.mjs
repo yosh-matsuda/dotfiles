@@ -12,7 +12,7 @@ export const HANDLED_TYPES = new Set([
   'session.fusion_commit_started', 'session.fusion_completed', 'abort', 'user.message', 'assistant.turn_start', 'assistant.message', 'assistant.turn_end',
   'tool.execution_start', 'tool.execution_complete', 'subagent.started', 'subagent.configured',
   'subagent.completed', 'subagent.failed', 'system.notification', 'permission.requested',
-  'permission.completed', 'hook.start', 'skill.invoked',
+  'permission.completed', 'human_response.recorded', 'hook.start', 'skill.invoked',
 ]);
 
 const ORPHAN_MS = 120_000;
@@ -24,7 +24,7 @@ const LEADING_CD_RE = /^cd\s+(?:"[^"]*"|'[^']*'|[^\s;&|]+)\s*&&\s*/;
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const BACKGROUND_RE = new RegExp(`agent_id:?\\s*\`?(${UUID})`, 'i');
 const AGENT_STATUS_RE = new RegExp(`agent_id: (${UUID}), agent_type: [^,]+, status: (\\w+)`, 'g');
-const SHELL_STARTED_RE = /^<command (?:started in background with shellId: (\S+?)>|with shellId: (\S+) is still running)/;
+const SHELL_STARTED_RE = /(?:^|\n)<command (?:started in background with shellId: (\S+?)|with shellId: (\S+) is still running[^\r\n>]*)>\s*$/;
 const SHELL_DONE_RE = /<shellId: (\S+?) completed with exit code (-?\d+)/g;
 const NOTICE_DONE_RE = new RegExp(`[Bb]ackground agent (${UUID}) (?:is |has )?(completed|complete|done|failed)`);
 const TERMINAL = new Set(['done', 'failed', 'cancelled']);
@@ -65,14 +65,23 @@ function firstLine(value, max) {
 const lineCount = (s) => (typeof s === 'string' && s.length ? s.split('\n').length : 0);
 const minOf = (a, b) => (a == null ? b : b == null ? a : Math.min(a, b));
 const maxOf = (a, b) => (a == null ? b : b == null ? a : Math.max(a, b));
+function addTokens(total, count) {
+  if (!Number.isFinite(count)) return total;
+  const sum = total + count;
+  return Number.isFinite(sum) ? sum : total;
+}
 function parseTime(value) {
   const t = typeof value === 'number' ? value : Date.parse(value);
-  return Number.isFinite(t) ? t : null;
+  return Number.isFinite(t) && Math.abs(t) <= 8.64e15 ? t : null;
 }
 function resultText(data) {
   const r = data?.result;
   const c = r && typeof r === 'object' ? r.content : r;
   return typeof c === 'string' ? c : '';
+}
+function callId(v) {
+  if (typeof v === 'string') return v.trim() ? v : null;
+  return Number.isFinite(v) ? String(v) : null;
 }
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
 
@@ -101,9 +110,9 @@ function newSession(id, ext) {
     // timeline. shellIds: the newest shell of each shellId, which the tools and notices name.
     agents: new Map(), aliases: new Map(), calls: new Map(), shells: new Map(), shellIds: new Map(), shellEnds: new Map(),
     perms: new Map(), intents: new Map(), buckets: new Map(), feed: [], feedSeq: 0, truncatedBefore: null,
-    replay: false,
+    replay: false, replayId: null, fusion: null, promptPending: false,
   };
-  S.agents.set('main', newAgent('main', { kind: 'main', parent: null, name: 'main', status: 'idle' }));
+  S.agents.set('main', newAgent('main', { kind: 'main', parent: null, name: 'main', status: 'idle', turnStartedAt: null }));
   return S;
 }
 
@@ -118,23 +127,25 @@ function touch(a, ts) {
 
 function setPhase(a, state, ts) {
   if (!a || ts == null) return;
-  const last = a.phases.at(-1);
+  const phases = a.history && ts < a.history.before ? a.history.phases : a.phases;
+  const last = phases.at(-1);
   if (last && last.end == null && last.state === state) return;
   if (last && last.end == null && ts < last.start) return;
   if (last && last.end != null && ts < last.end) return;
   if (last && last.end == null) {
-    if (ts === last.start) a.phases.pop();
+    if (ts === last.start) phases.pop();
     else last.end = ts;
   }
   if (!state) return;
-  const previous = a.phases.at(-1);
+  const previous = phases.at(-1);
   if (previous?.state === state && previous.end === ts) previous.end = null;
-  else a.phases.push({ state, start: ts, end: null });
-  if (a.phases.length > LIMITS.phases) a.phases.splice(0, a.phases.length - LIMITS.phases);
+  else phases.push({ state, start: ts, end: null });
+  if (phases.length > LIMITS.phases) phases.splice(0, phases.length - LIMITS.phases);
 }
 
 function syncPhase(S, a, ts) {
   if (!a) return;
+  if (TERMINAL.has(a.status)) return setPhase(a, null, ts);
   const calls = [...S.calls.values()].filter((c) => c.agent === a.key && c.status === 'running');
   const waiting = a.waiting || calls.some((c) => c.perm || c.category === 'ask')
     || [...S.perms.values()].some((p) => p.agent === a.key
@@ -233,8 +244,9 @@ function knownAgent(S, agentId) {
 
 // Events of a subagent name the task call that launched it in data.parentToolCallId.
 function ownerOf(S, ev, d, ts) {
-  if (typeof d.parentToolCallId === 'string' && d.parentToolCallId) {
-    return ev.agentId ? link(S, ev.agentId, d.parentToolCallId, ts) : taskAgent(S, d.parentToolCallId, ts);
+  const parent = callId(d.parentToolCallId);
+  if (parent) {
+    return ev.agentId ? link(S, ev.agentId, parent, ts) : taskAgent(S, parent, ts);
   }
   return byAgentId(S, ev.agentId, ts);
 }
@@ -264,10 +276,10 @@ function merge(S, t, p) {
   mergePhases(t, p);
   t.startedAt = minOf(t.startedAt, p.startedAt);
   t.lastActivityAt = maxOf(t.lastActivityAt, p.lastActivityAt);
-  for (const k of ['input', 'output', 'cacheRead']) t.tokens[k] += p.tokens[k];
+  for (const k of ['input', 'output', 'cacheRead']) t.tokens[k] = addTokens(t.tokens[k], p.tokens[k]);
   t.toolCount += p.toolCount;
   t.turns += p.turns;
-  for (const k of ['type', 'name', 'displayName', 'model', 'prompt', 'result', 'error', 'mode']) t[k] = t[k] ?? p[k];
+  for (const k of ['type', 'name', 'displayName', 'model', 'prompt', 'result', 'error', 'mode', 'effort']) t[k] = t[k] ?? p[k];
   if ((p.lastMessageAt ?? -1) > (t.lastMessageAt ?? -1)) {
     t.lastMessage = p.lastMessage;
     t.lastMessageAt = p.lastMessageAt;
@@ -276,6 +288,9 @@ function merge(S, t, p) {
     t.status = p.status;
     t.endedAt = p.endedAt;
   }
+  t.resumable ||= p.resumable;
+  t.waiting ||= p.waiting;
+  for (const perm of S.perms.values()) if (perm.agent === p.key) perm.agent = t.key;
   t.compacting ||= p.compacting;
   t.resultFed ||= p.resultFed;
   t.promptSeen ||= p.promptSeen;
@@ -300,7 +315,7 @@ function summarize(S, name, args, home) {
     case 'view': case 'create': case 'edit': case 'str_replace_editor':
       return oneLine(shortPath(a.path, home), TEXT.summary);
     case 'apply_patch': {
-      const m = /\*\*\* (?:Update|Add|Delete) File: (.+)/.exec(str(a.input) ?? '');
+      const m = /\*\*\* (?:Update|Add|Delete) File: (.+)/.exec(str(args) ?? str(a.input) ?? '');
       return m ? oneLine(shortPath(m[1].trim(), home), TEXT.summary) : null;
     }
     case 'grep': case 'rg': case 'glob':
@@ -355,7 +370,7 @@ function upsertCall(S, id, owner, f, ts, home) {
       id, agent: owner.key, name: f.name ?? '?', title: null, summary: null, category: 'other', mcp: null,
       startedAt: ts, endedAt: null, status: 'running', outcome: 0, exitCode: null, error: null, preview: null,
       intent: S.intents.get(id) ?? null, command: null, delta: null, perm: false, replayed: Boolean(f.replayed), extra: {},
-      detailRev: 0,
+      detailRev: 0, argsSeen: false,
     };
     S.intents.delete(id);
     S.calls.set(id, c);
@@ -376,9 +391,10 @@ function upsertCall(S, id, owner, f, ts, home) {
   if (f.title) c.title = f.title;
   if (f.mcp) c.mcp = f.mcp;
   c.category = toolCategory(c.name, c.mcp);
-  if (f.args && !c.summary) {
+  if (f.args && !c.argsSeen && (typeof f.args === 'string' || Object.keys(obj(f.args)).length)) {
     const a = obj(f.args);
-    c.summary = summarize(S, c.name, a, home);
+    c.argsSeen = true;
+    c.summary = summarize(S, c.name, f.args, home) ?? c.summary;
     if (c.name === 'bash' || c.name === 'powershell') {
       c.command = clip(a.command, TEXT.command);
       if (c.command) c.detailRev++;
@@ -400,26 +416,35 @@ function upsertCall(S, id, owner, f, ts, home) {
 
 // Outcomes rank: an explicit completion beats a hook, which beats an inferred closure.
 // The end time keeps the earliest evidence, because committed events can arrive late.
-function endCall(c, ts, o) {
+function endCall(S, c, ts, o) {
   if (ts != null) c.endedAt = Math.max(c.startedAt ?? ts, minOf(c.endedAt, ts));
   const rank = OUTCOME_RANK[o.source];
   if (rank >= c.outcome) {
     c.status = o.status;
     c.outcome = rank;
   }
-  if (o.exitCode != null) c.exitCode = o.exitCode;
+  if (Number.isFinite(o.exitCode)) c.exitCode = o.exitCode;
   if (o.error) c.error = oneLine(o.error, TEXT.error);
   if (o.preview) {
     c.preview = clip(o.preview, TEXT.preview);
     c.detailRev++;
   }
   c.perm = false;
+  if (S.calls.size > LIMITS.calls) trimCalls(S);
 }
 
 function closeDangling(S, agentKey, ts, status) {
+  S.agents.get(agentKey).waiting = false;
+  for (const [id, p] of S.perms) if (p.agent === agentKey) S.perms.delete(id);
   for (const c of S.calls.values()) {
-    if (c.agent === agentKey && c.status === 'running') endCall(c, ts, { source: 'inferred', status });
+    if (c.agent === agentKey && c.status === 'running') endCall(S, c, ts, { source: 'inferred', status });
   }
+}
+
+function finishAgent(S, a, status, ts) {
+  settle(a, status, ts);
+  closeDangling(S, a.key, ts, status === 'failed' || status === 'cancelled' ? 'interrupted' : 'unknown');
+  syncPhase(S, a, ts);
 }
 
 // A replayed call without its completion was never finished.
@@ -427,14 +452,16 @@ function endReplay(S, ts) {
   if (!S.replay) return;
   S.replay = false;
   for (const c of S.calls.values()) {
-    if (c.replayed && c.status === 'running') endCall(c, ts, { source: 'inferred', status: 'unknown' });
+    if (c.replayed && c.status === 'running') endCall(S, c, ts, { source: 'inferred', status: 'unknown' });
   }
 }
 
 function resetInflight(S, ts, mainStatus) {
   S.replay = false;
+  S.fusion = null;
+  S.promptPending = false;
   S.shellEnds.clear();
-  for (const c of S.calls.values()) if (c.status === 'running') endCall(c, ts, { source: 'inferred', status: 'interrupted' });
+  for (const c of S.calls.values()) if (c.status === 'running') endCall(S, c, ts, { source: 'inferred', status: 'interrupted' });
   for (const a of S.agents.values()) {
     setPhase(a, null, ts);
     a.compacting = false;
@@ -520,10 +547,11 @@ function shellFor(S, id, c, ts) {
 // tool result names shells that it ends too, such as the shell of a sync bash call, which has no
 // start to wait for.
 function endShell(S, id, ts, status, exitCode, early = false) {
+  if (!Number.isFinite(exitCode)) exitCode = null;
   const sh = S.shellIds.get(id);
   if (!sh) {
     if (!early) return;
-    S.shellEnds.set(id, { status, exitCode: exitCode ?? null, endedAt: ts });
+    S.shellEnds.set(id, { status, exitCode, endedAt: ts });
     if (S.shellEnds.size > 200) S.shellEnds.delete(S.shellEnds.keys().next().value);
     return;
   }
@@ -610,11 +638,8 @@ function checkShellProcs(S, procs, ts, host, taken) {
 function agentStatusFromText(S, a, status, ts) {
   if (!a) return;
   if (status === 'running') wake(a, ts);
-  else if (status === 'idle') {
-    if (!TERMINAL.has(a.status)) settle(a, 'idle', ts);
-  } else if (status === 'completed' || status === 'done') settle(a, 'done', ts);
-  else if (status === 'failed') settle(a, 'failed', ts);
-  else if (status === 'cancelled') settle(a, 'cancelled', ts);
+  else if (status === 'idle' && !TERMINAL.has(a.status)) return finishAgent(S, a, 'idle', ts);
+  else if (status === 'completed' || TERMINAL.has(status)) return finishAgent(S, a, status === 'completed' ? 'done' : status, ts);
   syncPhase(S, a, ts);
 }
 
@@ -629,10 +654,10 @@ function afterComplete(S, c, text, success, ts, live) {
       if (bg && /background/i.test(head)) {
         link(S, bg[1], c.id, ts);
         a.mode = 'background';
-        if (unseen) settle(a, 'running', ts);
+        if (a.status === 'starting' || a.status === 'orphan') settle(a, 'running', ts);
         if (/moved to background/i.test(head)) pushFeed(S, ts, a.key, 'agent', 'moved to the background');
       } else {
-        if (live ? !TERMINAL.has(a.status) : unseen) settle(a, success ? 'done' : 'failed', ts);
+        if (live ? !TERMINAL.has(a.status) : unseen) finishAgent(S, a, success ? 'done' : 'failed', ts);
         if (!success) a.error = a.error ?? oneLine(c.error ?? text, TEXT.error);
         a.result = (live ? clip(text, TEXT.result) : null) ?? a.result ?? clip(text, TEXT.result);
         pushResult(S, ts, a, text, success);
@@ -658,16 +683,18 @@ function afterComplete(S, c, text, success, ts, live) {
       for (const d of text.matchAll(SHELL_DONE_RE)) endShell(S, d[1], ts, 'done', Number(d[2]));
       break;
     }
-    case 'read_bash': {
+    case 'read_bash': case 'stop_bash': {
+      if (!success) break;
       for (const d of text.matchAll(SHELL_DONE_RE)) endShell(S, d[1], ts, 'done', Number(d[2]));
-      // A large output is replaced by a file reference that drops the marker.
-      if (c.extra.shellId && !/is still running/.test(text)) endShell(S, c.extra.shellId, ts, 'done', null);
-      else if (c.extra.shellId) reviveShell(S, c.extra.shellId);
+      // A saved preview may omit the shell footer.
+      if (/^Output too large to read at once \([^\n]* KB\)\. Saved to:/.test(text)) break;
+      const id = c.extra.shellId;
+      if (!id) break;
+      if (c.name === 'stop_bash') endShell(S, id, ts, 'stopped', null);
+      else if (/is still running/.test(text)) reviveShell(S, id);
+      else endShell(S, id, ts, 'done', null);
       break;
     }
-    case 'stop_bash':
-      if (c.extra.shellId) endShell(S, c.extra.shellId, ts, 'stopped', null);
-      break;
     default:
   }
 }
@@ -680,7 +707,7 @@ function onStart(S, d, ts, resume) {
   if (S.meta.generation > 1 || resume) resetInflight(S, ts, 'idle');
   const ctx = obj(d.context);
   const m = S.meta;
-  m.cwd = ctx.cwd ?? m.cwd;
+  if (typeof ctx.cwd === 'string') m.cwd = ctx.cwd;
   m.gitRoot = ctx.gitRoot ?? m.gitRoot;
   m.repo = ctx.repository ?? m.repo;
   m.branch = ctx.branch ?? m.branch;
@@ -694,6 +721,16 @@ function onStart(S, d, ts, resume) {
   if (resume) pushFeed(S, ts, 'main', 'notice', 'Session resumed');
 }
 
+// Fusion routing can precede both events that report its first prompt.
+function onPrompt(S, ts, hook) {
+  S.promptPending = hook;
+  endReplay(S, ts);
+  const f = S.fusion;
+  if (!f) return;
+  if (f.awaiting === 'prompt' || (!hook && f.awaiting === 'message')) f.awaiting = hook ? 'message' : null;
+  else f.active = false;
+}
+
 function onHook(S, ev, ts, home) {
   const d = obj(ev.data);
   const input = obj(d.input);
@@ -701,9 +738,11 @@ function onHook(S, ev, ts, home) {
     case 'preToolUse': {
       const owner = ownerOf(S, ev, d, ts);
       for (const tc of Array.isArray(input.toolCalls) ? input.toolCalls : []) {
-        if (!tc?.id) continue;
-        const c = upsertCall(S, tc.id, owner, { name: tc.name, args: tc.args }, ts, home);
+        const id = callId(tc?.id);
+        if (!id) continue;
+        const c = upsertCall(S, id, owner, { name: tc.name, args: tc.args }, ts, home);
         if (c.status !== 'running') continue;
+        if (owner.kind === 'main' && S.fusion) S.fusion.awaiting = null;
         wake(owner, ts);
         if (c.name === 'task') onTaskStart(S, c, tc.args, owner, ts);
         syncPhase(S, owner, ts);
@@ -711,27 +750,27 @@ function onHook(S, ev, ts, home) {
       break;
     }
     case 'postToolUse': case 'postToolUseFailure': {
-      if (!input.toolCallId) break;
+      const id = callId(input.toolCallId);
+      if (!id) break;
       const owner = ownerOf(S, ev, d, ts);
-      const c = upsertCall(S, input.toolCallId, owner, { name: input.toolName, args: input.toolArgs }, ts, home);
+      const c = upsertCall(S, id, owner, { name: input.toolName, args: input.toolArgs }, ts, home);
       const type = obj(input.toolResult).resultType;
       const failed = d.hookType === 'postToolUseFailure' || (type != null && type !== 'success');
       const err = input.error;
-      endCall(c, parseTime(input.timestamp) ?? ts, {
+      endCall(S, c, parseTime(input.timestamp) ?? ts, {
         source: 'hook', status: failed ? 'failed' : 'ok', error: typeof err === 'string' ? err : obj(err).message,
       });
       touch(owner, ts);
       syncPhase(S, owner, ts);
       const task = c.name === 'task' && failed ? S.agents.get(`tc:${c.id}`) : undefined;
       if (task && (task.status === 'starting' || task.status === 'orphan')) {
-        settle(task, 'failed', ts);
-        syncPhase(S, task, ts);
+        finishAgent(S, task, 'failed', ts);
         task.error = task.error ?? c.error;
       }
       break;
     }
     case 'preMcpToolCall': {
-      const c = input.toolCallId && S.calls.get(input.toolCallId);
+      const c = S.calls.get(callId(input.toolCallId));
       if (c && input.serverName) {
         c.mcp = String(input.serverName);
         c.category = 'mcp';
@@ -765,7 +804,7 @@ function onHook(S, ev, ts, home) {
         pushResult(S, ts, a, input.response, true);
       }
       // A sync agent ends with the task result; a background one ends here.
-      if (a.mode !== 'sync' && a.status === 'running') settle(a, a.resumable ? 'idle' : 'done', ts);
+      if (a.mode !== 'sync' && a.status === 'running') finishAgent(S, a, a.resumable ? 'idle' : 'done', ts);
       touch(a, ts);
       syncPhase(S, a, ts);
       break;
@@ -773,6 +812,7 @@ function onHook(S, ev, ts, home) {
     case 'agentStop':
       if (!ev.agentId) {
         const main = S.agents.get('main');
+        if (S.fusion) S.fusion.awaiting = null;
         if (main.status === 'running') settle(main, 'idle', ts);
         closeDangling(S, 'main', ts, 'unknown');
         syncPhase(S, main, ts);
@@ -780,7 +820,7 @@ function onHook(S, ev, ts, home) {
       break;
     case 'userPromptSubmitted':
       if (!ev.agentId) {
-        endReplay(S, ts);
+        onPrompt(S, ts, true);
         wake(S.agents.get('main'), ts);
         syncPhase(S, S.agents.get('main'), ts);
       }
@@ -799,13 +839,32 @@ function handle(S, ev, home) {
   const ts = parseTime(ev.timestamp) ?? S.meta.lastEventAt;
   if (ts != null) S.meta.lastEventAt = maxOf(S.meta.lastEventAt, ts);
   const main = S.agents.get('main');
+  // Only publish phases before the first start if the log confirms they were copied by a fork.
+  const history = main.history;
+  if (history && ts != null) {
+    if (ev.type === 'session.info' && d.infoType === 'fork' && history.earliest != null) {
+      S.meta.startedAt = minOf(S.meta.startedAt, history.earliest);
+      setPhase(history, null, history.before);
+      mergePhases(main, history);
+      main.history = null;
+    } else if (ts < history.before) {
+      if (history.earliest == null) setPhase(main, 'idle', ts);
+      history.earliest = minOf(history.earliest, ts);
+    } else if (history.earliest == null || ev.type === 'session.resume' || ev.type === 'session.shutdown') {
+      main.history = null;
+    }
+  }
+  const id = callId(d.toolCallId);
   const live = !(S.replay && !ev.agentId && REPLAYED.has(ev.type));
   switch (ev.type) {
-    case 'session.start': onStart(S, d, ts, false); break;
+    case 'session.start':
+      onStart(S, d, ts, false);
+      if (S.meta.generation === 1 && ts != null) main.history = { before: ts, earliest: null, phases: [] };
+      break;
     case 'session.resume': onStart(S, d, ts, true); break;
     case 'session.shutdown': {
       const nano = obj(d.accountingSnapshot).totalNanoAiu;
-      if (typeof nano === 'number') S.meta.aic = nano / 1e9;
+      if (Number.isFinite(nano)) S.meta.aic = nano / 1e9;
       resetInflight(S, ts, 'done');
       S.meta.endedAt = ts;
       pushFeed(S, ts, 'main', 'notice', 'Session ended');
@@ -823,15 +882,15 @@ function handle(S, ev, home) {
     }
     case 'session.mode_changed': S.meta.mode = d.newMode ?? S.meta.mode; break;
     case 'session.usage_checkpoint':
-      if (typeof d.totalNanoAiu === 'number') S.meta.aic = d.totalNanoAiu / 1e9;
-      if (typeof d.totalPremiumRequests === 'number') S.meta.premium = d.totalPremiumRequests;
+      if (Number.isFinite(d.totalNanoAiu)) S.meta.aic = d.totalNanoAiu / 1e9;
+      if (Number.isFinite(d.totalPremiumRequests)) S.meta.premium = d.totalPremiumRequests;
       break;
     case 'session.usage_record': {
       const u = obj(d.usage ?? d);
       const a = byAgentId(S, ev.agentId, ts);
-      a.tokens.input += Number(u.inputTokens) || 0;
-      a.tokens.output += Number(u.outputTokens) || 0;
-      a.tokens.cacheRead += Number(u.cacheReadTokens) || 0;
+      a.tokens.input = addTokens(a.tokens.input, u.inputTokens);
+      a.tokens.output = addTokens(a.tokens.output, u.outputTokens);
+      a.tokens.cacheRead = addTokens(a.tokens.cacheRead, u.cacheReadTokens);
       if (u.model) a.model = a.kind === 'main' ? String(u.model) : a.model ?? String(u.model);
       touch(a, ts);
       break;
@@ -851,37 +910,60 @@ function handle(S, ev, home) {
       break;
     case 'session.error':
       S.meta.errors++;
+      if (S.fusion) S.fusion.active = false;
+      closeDangling(S, 'main', ts, 'interrupted');
+      endReplay(S, ts);
       if (main.status === 'running') settle(main, 'failed', ts);
       syncPhase(S, main, ts);
       main.error = oneLine(d.message, TEXT.error);
       pushFeed(S, ts, 'main', 'error', oneLine(d.message, TEXT.feed));
       break;
     case 'session.task_complete':
-      settle(main, d.success === false ? 'failed' : 'idle', ts);
-      syncPhase(S, main, ts);
+      if (!TERMINAL.has(main.status)) finishAgent(S, main, d.success === false ? 'failed' : 'idle', ts);
       break;
     case 'session.fusion_resolved':
+      S.fusion = { id: d.fusionId, active: true, awaiting: S.promptPending ? 'message' : main.status === 'running' ? null : 'prompt' };
       S.meta.batched = true;
       endReplay(S, ts);
       break;
     case 'session.fusion_commit_started':
+      if (S.replayId !== d.fusionId) endReplay(S, ts);
       S.meta.batched = true;
       S.replay = true;
+      S.replayId = d.fusionId;
+      S.fusion ??= { id: d.fusionId, active: true };
+      if (S.fusion.id === d.fusionId) S.fusion.awaiting = null;
       break;
-    case 'session.fusion_completed': endReplay(S, ts); break;
-    case 'abort':
-      settle(main, 'cancelled', ts);
-      for (const a of S.agents.values()) setPhase(a, null, ts);
-      closeDangling(S, 'main', ts, 'interrupted');
+    case 'session.fusion_completed': {
+      if (S.replayId === d.fusionId) endReplay(S, ts);
+      const f = S.fusion;
+      if (f?.active && f.id === d.fusionId && !TERMINAL.has(main.status)) {
+        finishAgent(S, main, d.outcome === 'failed' ? 'failed' : 'idle', ts);
+      }
+      if (f?.id === d.fusionId) S.fusion = null;
+      break;
+    }
+    case 'abort': {
+      if (S.fusion) S.fusion.active = false;
+      const children = new Map();
       for (const a of S.agents.values()) {
-        if (a.kind === 'sub' && a.mode === 'sync' && (a.status === 'running' || a.status === 'starting')) settle(a, 'cancelled', ts);
+        if (a.mode !== 'sync') continue;
+        if (!children.has(a.parent)) children.set(a.parent, []);
+        children.get(a.parent).push(a);
+      }
+      const todo = [main];
+      while (todo.length) {
+        const a = todo.pop();
+        finishAgent(S, a, a !== main && TERMINAL.has(a.status) ? a.status : 'cancelled', ts);
+        for (const child of children.get(a.key) ?? []) todo.push(child);
       }
       pushFeed(S, ts, 'main', 'notice', oneLine(`Aborted${d.reason ? `: ${d.reason}` : ''}`, TEXT.feed));
       break;
+    }
     case 'user.message': {
       const text = typeof d.content === 'string' ? d.content : '';
-      if (ev.agentId) {
-        const a = byAgentId(S, ev.agentId, ts);
+      const a = ownerOf(S, ev, d, ts);
+      if (a.kind !== 'main') {
         // The first message to an agent repeats the prompt of its task call.
         const repeat = !a.promptSeen && a.argsSeen;
         a.promptSeen = true;
@@ -890,9 +972,10 @@ function handle(S, ev, home) {
         syncPhase(S, a, ts);
         if (!repeat) pushFeed(S, ts, a.key, 'handoff', clip(text, TEXT.feed));
       } else {
-        endReplay(S, ts);
+        onPrompt(S, ts, false);
         S.meta.title = S.meta.title ?? oneLine(text, 200);
         S.meta.lastPrompt = clip(text, TEXT.prompt);
+        main.turnStartedAt = maxOf(main.turnStartedAt, parseTime(ev.timestamp));
         wake(main, ts);
         syncPhase(S, main, ts);
         pushFeed(S, ts, 'main', 'user', clip(text, TEXT.feed));
@@ -902,6 +985,11 @@ function handle(S, ev, home) {
     case 'assistant.turn_start': {
       const a = ownerOf(S, ev, d, ts);
       a.turns++;
+      a.lastMsgHadTools = false;
+      if (a === main && live) {
+        S.promptPending = false;
+        if (S.fusion?.awaiting === 'message') S.fusion.awaiting = null;
+      }
       if (live) {
         wake(a, ts);
         syncPhase(S, a, ts);
@@ -913,14 +1001,15 @@ function handle(S, ev, home) {
       const requests = Array.isArray(d.toolRequests) ? d.toolRequests : [];
       a.lastMsgHadTools = requests.length > 0;
       for (const r of requests) {
-        if (!r?.toolCallId || !r.intentionSummary) continue;
+        const id = callId(r?.toolCallId);
+        if (!id || !r.intentionSummary) continue;
         const intent = oneLine(r.intentionSummary, TEXT.summary);
-        const c = S.calls.get(r.toolCallId);
+        const c = S.calls.get(id);
         if (c) {
           c.intent = c.intent ?? intent;
           c.summary = c.summary ?? intent;
         } else {
-          S.intents.set(r.toolCallId, intent);
+          S.intents.set(id, intent);
           if (S.intents.size > 500) S.intents.delete(S.intents.keys().next().value);
         }
       }
@@ -946,9 +1035,9 @@ function handle(S, ev, home) {
       break;
     }
     case 'tool.execution_start': {
-      if (!d.toolCallId) break;
+      if (!id) break;
       const owner = ownerOf(S, ev, d, ts);
-      const c = upsertCall(S, d.toolCallId, owner, {
+      const c = upsertCall(S, id, owner, {
         name: d.toolName, args: d.arguments, title: d.toolTitle, mcp: d.mcpServerName, explicit: true, replayed: !live,
       }, ts, home);
       if (c.status === 'running') {
@@ -959,12 +1048,12 @@ function handle(S, ev, home) {
       break;
     }
     case 'tool.execution_complete': {
-      if (!d.toolCallId) break;
-      const c = upsertCall(S, d.toolCallId, ownerOf(S, ev, d, ts), { replayed: !live }, ts, home);
+      if (!id) break;
+      const c = upsertCall(S, id, ownerOf(S, ev, d, ts), { replayed: !live }, ts, home);
       const text = resultText(d);
       const success = d.success !== false;
       const err = obj(d.error).message ?? (typeof d.error === 'string' ? d.error : null);
-      endCall(c, ts, {
+      endCall(S, c, ts, {
         source: 'complete', status: success ? 'ok' : 'failed', exitCode: obj(d.shellExecution).exitCode,
         error: success ? null : err ?? text, preview: text,
       });
@@ -974,40 +1063,42 @@ function handle(S, ev, home) {
       break;
     }
     case 'subagent.started': {
-      const a = d.toolCallId ? link(S, ev.agentId, d.toolCallId, ts) : byAgentId(S, ev.agentId, ts);
+      if (!id && !ev.agentId) break;
+      const a = id ? link(S, ev.agentId, id, ts) : byAgentId(S, ev.agentId, ts);
       a.displayName = oneLine(d.agentDisplayName, 80) ?? a.displayName;
       a.type = oneLine(d.agentType ?? d.agentName, 60) ?? a.type;
       a.description = a.description ?? oneLine(d.agentDescription, 200);
       a.model = d.model ?? a.model;
       a.mode = d.executionMode ?? a.mode;
-      a.resumable = Boolean(d.resumable);
+      a.resumable = Boolean(d.resumable) || a.resumable;
       a.placeholder = false;
       wake(a, ts);
       syncPhase(S, a, ts);
       break;
     }
     case 'subagent.configured': {
-      const a = d.toolCallId ? link(S, ev.agentId, d.toolCallId, ts) : byAgentId(S, ev.agentId, ts);
+      if (!id && !ev.agentId) break;
+      const a = id ? link(S, ev.agentId, id, ts) : byAgentId(S, ev.agentId, ts);
       a.model = d.model ?? a.model;
       a.effort = d.reasoningEffort ?? a.effort;
+      if (typeof d.multiTurn === 'boolean') a.resumable = d.multiTurn;
       break;
     }
     case 'subagent.completed': {
-      const a = d.toolCallId ? link(S, ev.agentId, d.toolCallId, ts) : byAgentId(S, ev.agentId, ts);
-      a.reportedToolCalls = d.totalToolCalls ?? a.reportedToolCalls;
-      a.reportedTokens = d.totalTokens ?? a.reportedTokens;
-      a.durationMs = d.durationMs ?? a.durationMs;
+      if (!id && !ev.agentId) break;
+      const a = id ? link(S, ev.agentId, id, ts) : byAgentId(S, ev.agentId, ts);
+      if (Number.isFinite(d.totalToolCalls)) a.reportedToolCalls = d.totalToolCalls;
+      if (Number.isFinite(d.totalTokens)) a.reportedTokens = d.totalTokens;
+      if (Number.isFinite(d.durationMs)) a.durationMs = d.durationMs;
       a.model = d.model ?? a.model;
-      if (d.cancelled) settle(a, 'cancelled', ts);
-      else if (a.mode === 'background' && a.resumable) settle(a, 'idle', ts);
-      else settle(a, 'done', ts);
-      syncPhase(S, a, ts);
+      if (d.cancelled) finishAgent(S, a, 'cancelled', ts);
+      else if (!TERMINAL.has(a.status)) finishAgent(S, a, a.mode === 'background' && a.resumable ? 'idle' : 'done', ts);
       break;
     }
     case 'subagent.failed': {
-      const a = d.toolCallId ? link(S, ev.agentId, d.toolCallId, ts) : byAgentId(S, ev.agentId, ts);
-      settle(a, 'failed', ts);
-      syncPhase(S, a, ts);
+      if (!id && !ev.agentId) break;
+      const a = id ? link(S, ev.agentId, id, ts) : byAgentId(S, ev.agentId, ts);
+      finishAgent(S, a, 'failed', ts);
       a.error = oneLine(typeof d.error === 'string' ? d.error : obj(d.error).message, TEXT.error) ?? a.error;
       pushFeed(S, ts, a.key, 'error', a.error ?? 'Agent failed');
       break;
@@ -1020,29 +1111,35 @@ function handle(S, ev, home) {
         if (a && k.type === 'agent_completed') next = k.status === 'failed' ? 'failed' : 'done';
         // Only a resumable agent keeps waiting for messages; write_agent can still wake a done one.
         else if (a && !TERMINAL.has(a.status)) next = a.resumable ? 'idle' : 'done';
-        if (next) settle(a, next, ts);
-        if (next) syncPhase(S, a, ts);
+        if (next) finishAgent(S, a, next, ts);
         const who = k.displayName ?? (a ? agentLabel(a) : 'agent');
         if (!a?.resultFed) pushFeed(S, ts, a?.key ?? 'main', 'agent', oneLine(`${who} finished`, TEXT.feed));
       } else if (k.type === 'shell_completed' || k.type === 'shell_detached_completed') {
         const id = String(k.shellId);
-        endShell(S, id, ts, 'done', typeof k.exitCode === 'number' ? k.exitCode : null, true);
+        endShell(S, id, ts, 'done', k.exitCode, true);
         const label = k.description ? `"${k.description}"` : id;
-        const code = typeof k.exitCode === 'number' ? ` (exit ${k.exitCode})` : '';
+        const code = Number.isFinite(k.exitCode) ? ` (exit ${k.exitCode})` : '';
         pushFeed(S, ts, S.shellIds.get(id)?.agent ?? 'main', 'notice', oneLine(`Shell ${label} finished${code}`, TEXT.feed));
       } else {
         const m = NOTICE_DONE_RE.exec(typeof d.content === 'string' ? d.content : '');
         const a = m && knownAgent(S, m[1]);
         if (a) {
-          settle(a, m[2] === 'failed' ? 'failed' : 'done', ts);
-          syncPhase(S, a, ts);
+          finishAgent(S, a, m[2] === 'failed' ? 'failed' : 'done', ts);
         }
+      }
+      break;
+    }
+    case 'human_response.recorded': {
+      const c = S.calls.get(id);
+      if (c) {
+        endCall(S, c, ts, { source: 'hook', status: 'ok' });
+        syncPhase(S, S.agents.get(c.agent), ts);
       }
       break;
     }
     case 'permission.requested': {
       const req = obj(d.permissionRequest);
-      const c = req.toolCallId ? S.calls.get(req.toolCallId) : undefined;
+      const c = S.calls.get(callId(req.toolCallId));
       if (c) c.perm = true;
       const a = c ? S.agents.get(c.agent) : byAgentId(S, ev.agentId, ts);
       if (!c && a) a.waiting = true;
@@ -1108,6 +1205,7 @@ function serialize(S) {
       key: a.key, parent: a.parent, kind: a.kind, agentId: a.agentId, name: agentLabel(a), type: a.type,
       description: a.description, mode: a.mode, model: a.model, effort: a.effort, status: a.status, display,
       startedAt: a.startedAt, endedAt: a.endedAt, lastActivityAt: a.lastActivityAt, prompt: a.prompt,
+      ...(a.kind === 'main' ? { turnStartedAt: a.turnStartedAt } : {}),
       phases: a.phases.map((p) => ({ ...p })),
       lastMessage: a.lastMessage, lastMessageAt: a.lastMessageAt, result: a.result, error: a.error,
       tokens: { ...a.tokens }, reportedTokens: a.reportedTokens, toolCount: Math.max(a.toolCount, a.reportedToolCalls ?? 0),
@@ -1211,7 +1309,7 @@ export function createModel({ home = '', now = Date.now, onError = null } = {}) 
       if (epoch !== undefined && epoch !== S?.epoch) {
         throw Object.assign(new Error('This session was reloaded; select the call again.'), { status: 409 });
       }
-      const c = S?.calls.get(id);
+      const c = S?.calls.get(callId(id));
       if (!c) return null;
       return {
         id: c.id, name: c.name, title: c.title, summary: c.summary, intent: c.intent, status: shownStatus(S, c),
@@ -1247,18 +1345,20 @@ export function createModel({ home = '', now = Date.now, onError = null } = {}) 
       }
       if (checkShellProcs(S, procs, ts, host, taken)) dirty.add(sid);
     },
-    snapshot: () => ({ rev, sessions: [...sessions.values()].map(serialize) }),
-    drain() {
-      if (!dirty.size && !removed.size) return null;
+    // `keep` holds back sessions that are not ready to show; they stay dirty until they are.
+    snapshot: (keep = () => true) => ({ rev, sessions: [...sessions.values()].filter((S) => keep(S.id)).map(serialize) }),
+    drain(keep = () => true) {
+      const ready = [...dirty].filter((sid) => keep(sid));
+      if (!ready.length && !removed.size) return null;
       rev++;
       const out = { rev, sessions: [], removed: [...removed] };
-      for (const sid of dirty) {
+      for (const sid of ready) {
+        dirty.delete(sid);
         const S = sessions.get(sid);
         if (!S) continue;
         S.rev = rev;
         out.sessions.push(serialize(S));
       }
-      dirty.clear();
       removed.clear();
       return out;
     },

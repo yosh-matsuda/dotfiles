@@ -4,10 +4,12 @@
 // lives only in this process, so a page of an earlier server must pair again.
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { unlinkSync, writeFileSync } from 'node:fs';
 import { chmod, link, lstat, readFile, rename, unlink } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { endianness, release } from 'node:os';
 import { join } from 'node:path';
+import { copilotHome } from './monitor.mjs';
 import { loadRemotes } from './remote.mjs';
 import { createSources } from './sources.mjs';
 import { codeVersion, control, DEFAULT_PORT, HERE, runtimeDir, socketPath } from './runtime.mjs';
@@ -126,8 +128,7 @@ export function socketOwners(tables, from, to, le = endianness() === 'LE') {
 // /proc/net/tcp or tcp6, or the error of reading it.
 export function peerVerdict(tables, from, to, { uid, wsl, le = endianness() === 'LE' }) {
   const read = tables.filter((t) => typeof t === 'string');
-  // Without a table there is nothing to check.
-  if (!read.length) return true;
+  if (!read.length) return wsl;
   const uids = socketOwners(read, from, to, le);
   if (uids.length) return uids.every((u) => u === uid || (wsl && u === 0));
   // No row is found for a Windows program over mirrored networking. A table that could not be
@@ -193,7 +194,8 @@ const frame = (msg) => `data: ${JSON.stringify(msg)}\n\n`;
 export async function startServer({
   port = DEFAULT_PORT, sinceMs = 864e5, idleExitMs = 0, remotePauseMs = 600_000, log = (m) => process.stderr.write(`${m}\n`),
 } = {}) {
-  const remotes = await loadRemotes();
+  const home = copilotHome();
+  const remotes = await loadRemotes(home);
   const dir = await runtimeDir();
   const sock = socketPath(dir);
   const version = await codeVersion();
@@ -201,6 +203,9 @@ export async function startServer({
   const uid = process.getuid?.();
   const token = randomBytes(32).toString('base64url');
   const codes = new Map();
+  const launchFiles = new Map();
+  let warned = false;
+  let peerWarning = null;
   // Each viewer: whether it skipped a message and so needs a snapshot, when it last caught up,
   // and whether its page is in view, as the page last reported.
   const clients = new Map();
@@ -227,7 +232,7 @@ export async function startServer({
   });
 
   const status = () => ({
-    pid: process.pid, version, startedAt, requestedPort: port, port: actualPort, url: actualPort ? `http://127.0.0.1:${actualPort}/` : null,
+    pid: process.pid, copilotHome: home, peerWarning, version, startedAt, requestedPort: port, port: actualPort, url: actualPort ? `http://127.0.0.1:${actualPort}/` : null,
     ready: sources.snapshot().ready, sinceMs, idleExitMs, remotePauseMs, remotesPaused, clients: clients.size,
     visibleClients: [...clients.values()].filter((c) => c.visible).length,
     sessions: sources.snapshot().sessions.length, hosts: sources.snapshot().hosts, remotes, errors,
@@ -257,12 +262,23 @@ export async function startServer({
 
   function newCode() {
     const now = Date.now();
+    if (!clients.size) idleSince = now;
     for (const [c, expires] of codes) if (expires < now) codes.delete(c);
     const code = randomBytes(18).toString('base64url');
     codes.set(code, now + CODE_TTL_MS);
     return code;
   }
   const launchUrl = () => `http://127.0.0.1:${actualPort}/?code=${newCode()}`;
+
+  function removeLaunchFile(file) {
+    clearTimeout(launchFiles.get(file));
+    launchFiles.delete(file);
+    try {
+      unlinkSync(file);
+    } catch (e) {
+      if (e.code !== 'ENOENT') report('removing a launch file', e);
+    }
+  }
 
   function onControl(req, res) {
     const send = (code, body) => {
@@ -274,7 +290,21 @@ export async function startServer({
     if (req.method === 'POST' && url.pathname === '/launch') {
       // The link of a server that is stopping would not work.
       if (closing) return send(503, { error: 'stopping' });
-      return actualPort ? send(200, { ...status(), launch: launchUrl() }) : send(503, { error: 'starting' });
+      if (!actualPort) return send(503, { error: 'starting' });
+      const launch = launchUrl();
+      if (process.platform === 'darwin' && (url.searchParams.get('file') === '1' || !process.env.BROWSER)) {
+        // The name is independent of the code because other users can see the argv of open.
+        const file = join(dir, `launch-${randomBytes(16).toString('hex')}.html`);
+        try {
+          writeFileSync(file, `<!doctype html><meta charset="utf-8"><script>location.replace(${JSON.stringify(launch)})</script>`, { flag: 'wx', mode: 0o600 });
+        } catch (e) {
+          report('creating a launch file', e);
+          return send(500, { error: 'cannot create a private launch file' });
+        }
+        launchFiles.set(file, setTimeout(() => removeLaunchFile(file), CODE_TTL_MS));
+        return send(200, { ...status(), launch, file });
+      }
+      return send(200, { ...status(), launch });
     }
     if (req.method === 'POST' && url.pathname === '/stop') {
       // The caller names the server it saw, so it does not stop one that replaced it.
@@ -291,19 +321,25 @@ export async function startServer({
 
   // Another user of this machine can connect to 127.0.0.1 too. On Linux, the socket table tells
   // whose program holds the other end.
-  function peerAllowed(socket) {
-    if (process.platform !== 'linux' || uid === undefined) return true;
-    let allowed = peers.get(socket);
-    if (allowed === undefined) {
-      allowed = Promise.all(['/proc/net/tcp', '/proc/net/tcp6'].map((f) => readFile(f, 'latin1').catch((e) => e))).then((tables) => peerVerdict(
-        tables,
-        { address: socket.remoteAddress, port: socket.remotePort },
-        { address: socket.localAddress, port: socket.localPort },
-        { uid, wsl: WSL },
-      ));
-      peers.set(socket, allowed);
+  function peerError(socket) {
+    if (process.platform !== 'linux' || uid === undefined) return null;
+    let verdict = peers.get(socket);
+    if (verdict === undefined) {
+      const from = { address: socket.remoteAddress, port: socket.remotePort };
+      const to = { address: socket.localAddress, port: socket.localPort };
+      verdict = Promise.all(['/proc/net/tcp', '/proc/net/tcp6'].map((f) => readFile(f, 'latin1').catch((e) => e))).then((tables) => {
+        if (!WSL && tables.every((t) => typeof t !== 'string')) {
+          peerWarning = 'cannot verify the owner of this connection: Linux socket tables are unreadable';
+          if (!warned) log(`copilot-viz: ${peerWarning}`);
+          warned = true;
+          return peerWarning;
+        }
+        peerWarning = null;
+        return peerVerdict(tables, from, to, { uid, wsl: WSL }) ? null : 'forbidden user';
+      });
+      peers.set(socket, verdict);
     }
-    return allowed;
+    return verdict;
   }
 
   function send(res, c, chunk) {
@@ -347,11 +383,13 @@ export async function startServer({
     if (expires === undefined) return json(res, 403, { error: 'unknown or used code' });
     codes.delete(code);
     if (expires < Date.now()) return json(res, 403, { error: 'expired code' });
+    if (!clients.size) idleSince = Date.now();
     return json(res, 200, { token });
   }
 
   // EventSource cannot send headers, so the stream takes the token from the query.
   function stream(req, res, given) {
+    if (res.destroyed || res.closed || req.socket.destroyed || req.socket.closed) return;
     if (!sameToken(given, token)) return json(res, 401, { error: 'unauthorized' });
     res.writeHead(200, { ...HEADERS, 'Content-Type': 'text/event-stream; charset=utf-8', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     req.socket.setNoDelay(true);
@@ -404,7 +442,8 @@ export async function startServer({
   async function onRequest(req, res) {
     try {
       if (!LOCAL_HOSTS.has(hostname(req.headers.host))) return json(res, 403, { error: 'forbidden host' });
-      if (!(await peerAllowed(req.socket))) return json(res, 403, { error: 'forbidden user' });
+      const error = await peerError(req.socket);
+      if (error) return json(res, 403, { error });
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
       const path = url.pathname;
       if (req.method === 'GET' || req.method === 'HEAD') {
@@ -463,6 +502,7 @@ export async function startServer({
     closing = true;
     log(`copilot-viz: stopping: ${reason}`);
     clearTimeout(pauseTimer);
+    for (const file of launchFiles.keys()) removeLaunchFile(file);
     const stopped = sources.stop();
     for (const t of timers) clearInterval(t);
     for (const res of clients.keys()) res.end();

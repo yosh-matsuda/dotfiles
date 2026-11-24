@@ -141,12 +141,12 @@ export function createRemote(config, {
       }
       if (!['snapshot', 'delta', 'status'].includes(msg.type)) throw new Error('Unexpected worker message.');
       if (!a.baseline && msg.type !== 'snapshot') throw new Error('Worker sent changes without a snapshot.');
+      if (msg.type === 'snapshot' && msg.ready !== true) throw new Error('Worker snapshot is incomplete.');
+      onMessage(msg);
       if (msg.type === 'snapshot') {
-        if (msg.ready !== true) throw new Error('Worker snapshot is incomplete.');
         a.baseline = true;
         attempts = 0;
       }
-      onMessage(msg);
     }, fail);
     a.timer = setInterval(() => {
       const now = Date.now();

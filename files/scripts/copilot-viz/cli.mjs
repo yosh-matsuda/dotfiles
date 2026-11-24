@@ -4,9 +4,9 @@
 import { spawn } from 'node:child_process';
 import { closeSync, openSync, readFileSync, statSync, truncateSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { parseDuration } from './monitor.mjs';
+import { copilotHome, parseDuration } from './monitor.mjs';
 import { loadRemotes } from './remote.mjs';
 import { codeVersion, control, DEFAULT_PORT, HERE, running, runtimeDir, socketPath } from './runtime.mjs';
 
@@ -53,16 +53,22 @@ function options() {
   if (positionals.length > 1) throw new Error(`unexpected argument: ${positionals[1]}`);
   const command = positionals[0] ?? 'open';
   if (!['open', 'serve', 'status', 'stop'].includes(command)) throw new Error(`unknown command: ${command}`);
+  if (command === 'status' || command === 'stop') {
+    for (const name of ['port', 'since', 'no-open']) {
+      if (values[name] !== undefined) throw new Error(`--${name} does not work with ${command}`);
+    }
+  }
   for (const name of ['idle-exit', 'pause-remotes']) {
     if (command !== 'serve' && values[name] !== undefined) throw new Error(`--${name} works only with serve`);
   }
-  const port = values.port === undefined ? undefined : Number(values.port);
+  const number = (text) => text.trim() ? Number(text) : NaN;
+  const port = values.port === undefined ? undefined : number(values.port);
   if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) throw new Error(`bad --port: ${values.port}`);
   const sinceMs = values.since === undefined ? undefined : parseDuration(values.since);
   if (sinceMs === null) throw new Error(`bad --since: ${values.since}`);
-  const idle = values['idle-exit'] === undefined ? 0 : Number(values['idle-exit']);
-  if (!(idle >= 0)) throw new Error(`bad --idle-exit: ${values['idle-exit']}`);
-  const pause = values['pause-remotes'] === undefined ? 10 : Number(values['pause-remotes']);
+  const idle = values['idle-exit'] === undefined ? 0 : number(values['idle-exit']);
+  if (!(idle >= 0 && Number.isFinite(idle * 60_000))) throw new Error(`bad --idle-exit: ${values['idle-exit']}`);
+  const pause = values['pause-remotes'] === undefined ? 10 : number(values['pause-remotes']);
   if (!(pause >= 0 && pause * 60_000 <= MAX_TIMER_MS)) throw new Error(`bad --pause-remotes: ${values['pause-remotes']}`);
   return {
     command, port, sinceMs, since: values.since, noOpen: values['no-open'] ?? false, idleExitMs: idle * 60_000, remotePauseMs: pause * 60_000,
@@ -105,6 +111,7 @@ function logTail(logPath) {
 // Why a running server does not fit this open, or null. A server that asked for a port and got
 // another one, because that port was taken, still fits.
 function difference(st, opt, version) {
+  if (st.copilotHome !== copilotHome()) return 'a different COPILOT_HOME';
   if (st.version !== version) return 'its code changed';
   if (JSON.stringify(st.remotes ?? []) !== JSON.stringify(opt.remotes)) return 'its remote configuration changed';
   if (opt.port !== undefined && st.requestedPort !== opt.port) return `--port ${opt.port}`;
@@ -112,22 +119,37 @@ function difference(st, opt, version) {
   return null;
 }
 
-function browserCommand(url) {
+function browserPath(entry) {
+  try {
+    return statSync(entry).isFile() ? resolve(entry) : null;
+  } catch {
+    return null;
+  }
+}
+
+function* browserCommands(url) {
   const env = process.env;
-  const browser = env.BROWSER?.split(':').find((x) => x.trim());
-  if (browser) {
-    const script = browser.includes('%s') ? browser.replaceAll('%s', '"$1"') : `${browser} "$1"`;
-    return { cmd: '/bin/sh', args: ['-c', script, 'sh', url] };
+  const entries = env.BROWSER?.split(':').map((x) => x.trim()).filter(Boolean);
+  if (entries?.length) {
+    for (const entry of entries) {
+      const path = browserPath(entry);
+      if (path) {
+        yield { cmd: path, args: [url] };
+      } else {
+        const script = entry.includes('%s') ? entry.replace(/'%s'|"%s"|%s/g, '"$1"') : `${entry} "$1"`;
+        yield { cmd: '/bin/sh', args: ['-c', script, 'sh', url] };
+      }
+    }
+    return;
   }
   // explorer.exe takes a URL for a path and can open a File Explorer window instead of the
   // browser; url.dll hands the URL to ShellExecute, which opens the default Windows browser.
-  if (env.WSL_DISTRO_NAME || env.WSL_INTEROP) return { cmd: 'rundll32.exe', args: ['url.dll,FileProtocolHandler', url] };
-  if (process.platform === 'darwin') return { cmd: 'open', args: [url] };
-  return { cmd: 'xdg-open', args: [url] };
+  if (env.WSL_DISTRO_NAME || env.WSL_INTEROP) yield { cmd: 'rundll32.exe', args: ['url.dll,FileProtocolHandler', url] };
+  else if (process.platform === 'darwin') yield { cmd: 'open', args: [url] };
+  else yield { cmd: 'xdg-open', args: [url] };
 }
 
-function openBrowser(url) {
-  const { cmd, args } = browserCommand(url);
+function tryBrowser({ cmd, args }) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
     const timer = setTimeout(() => {
@@ -145,9 +167,15 @@ function openBrowser(url) {
   });
 }
 
+async function openBrowser(url) {
+  for (const command of browserCommands(url)) if (await tryBrowser(command)) return true;
+  return false;
+}
+
 // Another open may start or restart the server at the same time; the server that keeps the
 // socket serves both.
 async function open(dir, sock, opt) {
+  const fileLaunch = process.platform === 'darwin' && !process.env.BROWSER?.split(':').some((x) => x.trim());
   opt.remotes = await loadRemotes();
   const version = await codeVersion();
   const logPath = join(dir, 'server.log');
@@ -180,7 +208,7 @@ async function open(dir, sock, opt) {
       await waitGone(sock, st.pid, deadline);
       continue;
     } else if (st.port) {
-      const l = await ask('POST', '/launch');
+      const l = await ask('POST', fileLaunch ? '/launch?file=1' : '/launch');
       if (l?.status === 200) {
         if (why) say(`another copilot-viz started the server first, so it ignores ${why}`);
         reply = l.body;
@@ -198,10 +226,11 @@ async function open(dir, sock, opt) {
   if (process.env.SSH_CONNECTION) {
     say(`on your machine, forward the port first: ssh -L ${reply.port}:127.0.0.1:${reply.port} ${hostname()}`);
   }
-  if (!opt.noOpen && !(await openBrowser(url))) say('no browser opened; open the link above (it works once, for 2 minutes)');
+  if (!opt.noOpen && !(await openBrowser(fileLaunch ? reply.file : url))) say('no browser opened; open the link above (it works once, for 2 minutes)');
 }
 
 async function main() {
+  if (process.platform === 'win32') throw new Error('Native Windows is not supported; use WSL to run copilot-viz.');
   const opt = options();
   const dir = await runtimeDir();
   const sock = socketPath(dir);
@@ -236,6 +265,7 @@ async function main() {
         `running at ${st.url} (pid ${st.pid})${outdated}`,
         `up ${mins(Date.now() - st.startedAt)}, ${st.sessions} sessions, ${st.clients} viewers (${st.visibleClients ?? '?'} in view), ${st.ready ? 'ready' : 'loading'}, ${st.errors} errors`,
         `since ${mins(st.sinceMs)}, idle exit ${st.idleExitMs ? mins(st.idleExitMs) : 'never'}, remote pause ${st.remotePauseMs ? mins(st.remotePauseMs) : 'never'}`,
+        ...(st.peerWarning ? [st.peerWarning] : []),
         ...(st.hosts ?? []).filter((h) => h.remote).map((h) => `${h.name}: ${h.state}${h.error ? ` (${h.error})` : ''}`),
       ].join('\n') + '\n');
       return undefined;
@@ -246,7 +276,10 @@ async function main() {
         say('not running');
         return undefined;
       }
-      const r = await control(sock, 'POST', `/stop?pid=${st.pid}`);
+      const r = await control(sock, 'POST', `/stop?pid=${st.pid}`).catch((e) => {
+        if (e.code !== 'ECONNRESET' && e.code !== 'EPIPE') throw e;
+        return null;
+      });
       if (r?.status === 409) throw new Error('another server replaced it meanwhile; run stop again');
       await waitGone(sock, st.pid, Date.now() + 5000);
       say('stopped');

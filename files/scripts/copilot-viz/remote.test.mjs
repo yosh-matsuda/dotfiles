@@ -104,9 +104,9 @@ test('sources isolate identical session IDs, retain disconnected data and route 
   assert.equal(store.sessions.get('test/same').stale, false);
 
   dev.onState('loading', null, null);
-  assert.throws(() => dev.onMessage(snapshot([{ id: 'invalid' }])), /Invalid sessions/);
+  assert.throws(() => dev.onMessage(snapshot([original], NaN)), /Invalid sessions/);
   assert.equal(store.sessions.get(first.id).stale, true);
-  dev.onMessage(snapshot([original]));
+  dev.onMessage(snapshot([original, { id: 'invalid' }]));
   const next = store.sessions.get(first.id);
   assert.notEqual(next.epoch, first.epoch);
   await assert.rejects(sources.callDetail(first.id, 'call', first.epoch), { status: 409 });
@@ -291,4 +291,100 @@ test('stopping SSH escalates and waits for a TERM-resistant child', { timeout: 5
   await waitFor(() => initialized);
   await remote.stop();
   assert.equal(child.signalCode, 'SIGKILL');
+});
+
+test('an invalid batch changes no host data and retries only publish host metadata', async (t) => {
+  let dev;
+  const messages = [];
+  const errors = [];
+  const sources = createSources({
+    remotes: [{ host: 'dev' }], onError: (e) => errors.push(e), onMessage: (m) => messages.push(m),
+    remoteFactory: (_, options) => { dev = options; return { stop() {} }; },
+  });
+  t.after(() => sources.stop());
+  dev.onMessage(snapshot([session()]));
+  const before = sources.snapshot();
+  assert.throws(() => dev.onMessage({ ...snapshot([session('new')], 1), removed: [42] }), /Invalid sessions/);
+  assert.deepEqual(sources.snapshot().hosts, before.hosts);
+  dev.onState('offline', 'lost connection', null);
+  assert.deepEqual(messages.at(-1).sessions.map((s) => s.id), ['dev/same']);
+  assert.equal(messages.at(-1).sessions[0].sourceNow, before.sessions[0].sourceNow);
+  dev.onState('connecting', null, null);
+  assert.deepEqual(messages.at(-1).sessions, []);
+  assert.equal(errors.length, 1);
+});
+
+test('invalid ready snapshots retain the reconnect backoff', async (t) => {
+  const children = [];
+  const delays = [];
+  const remote = createRemote({ host: 'dev', node: 'node', script: 'worker.mjs' }, {
+    sinceMs: 1, retryMs: 50, onMessage() { throw new Error('Rejected snapshot'); },
+    onState(state, error, retryAt) { if (state === 'offline') delays.push(retryAt - Date.now()); },
+    spawnProcess() { const c = fakeChild(); children.push(c); return c; },
+  });
+  t.after(() => remote.stop());
+  remote.start();
+  for (let i = 0; i < 2; i++) {
+    await waitFor(() => children[i]);
+    children[i].send({ type: 'hello', protocol: PROTOCOL });
+    children[i].send(snapshot([]));
+  }
+  assert.ok(delays[1] > delays[0] + 30);
+});
+
+// The pipe still carries real frames. Its write result and drain event are under test control.
+async function blockedWorker(t, home) {
+  const prelude = `
+    const write = process.stdout.write.bind(process.stdout);
+    let blocked = true;
+    process.stdout.write = (frame) => {
+      if (JSON.parse(frame).type === 'snapshot') blocked = true;
+      return write(frame) && !blocked;
+    };
+    Object.defineProperty(process.stdout, 'writableLength', { get: () => blocked ? 2 ** 21 : 0 });
+    process.on('message', () => { blocked = false; process.stdout.emit('drain'); });
+  `;
+  const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(prelude)}`,
+    join(HERE, 'worker.mjs'), '--home', home], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
+  t.after(() => child.kill('SIGKILL'));
+  const messages = [];
+  const errors = [];
+  child.stderr.on('data', (b) => errors.push(b.toString()));
+  readMessages(child.stdout, (m) => messages.push(m), (e) => { throw e; });
+  await waitFor(() => messages[0]?.type === 'hello');
+  return { child, messages, errors };
+}
+
+test('a blocked worker sends a ready baseline even for an empty home', async (t) => {
+  const { child, messages } = await blockedWorker(t, await temporary(t));
+  await sleep(500);
+  assert.deepEqual(messages.map((m) => m.type), ['hello']);
+  child.send('drain');
+  await waitFor(() => messages.length > 1);
+  assert.equal(messages[1].type, 'snapshot');
+  assert.equal(messages[1].ready, true);
+  assert.deepEqual(messages[1].sessions, []);
+});
+
+test('a slow worker survives collector errors and busy detail replies, then flushes removals as a delta', async (t) => {
+  const home = await temporary(t);
+  const dir = join(home, 'session-state', 'sid');
+  await mkdir(join(dir, 'workspace.yaml'), { recursive: true });
+  await writeFile(join(dir, 'events.jsonl'), '');
+  const { child, messages, errors } = await blockedWorker(t, home);
+  await waitFor(() => errors.join('').includes('EISDIR'));
+  const call = (request) => child.stdin.write(encodeMessage({ type: 'call', request, sid: 'sid', id: 'C', epoch: 'E' }));
+  call(1);
+  await waitFor(() => messages.some((m) => m.request === 1));
+  assert.deepEqual(messages.at(-1), { type: 'reply', request: 1, error: 'Too many pending detail replies.', status: 503 });
+  child.send('drain');
+  await waitFor(() => messages.some((m) => m.type === 'snapshot'));
+  assert.equal(messages.at(-1).sessions[0].id, 'sid');
+  await rm(dir, { recursive: true });
+  // Allow a discovery and a collector interval to run while the baseline write is blocked.
+  await sleep(5700);
+  child.send('drain');
+  await waitFor(() => messages.at(-1).type !== 'snapshot');
+  assert.equal(messages.at(-1).type, 'delta');
+  assert.deepEqual(messages.at(-1).removed, ['sid']);
 });

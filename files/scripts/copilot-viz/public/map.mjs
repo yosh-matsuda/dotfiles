@@ -2,7 +2,7 @@
 // launched it. Agents at work get a card; finished ones shrink to a chip.
 
 import { clientName } from './sessions.mjs';
-import { DORMANT_MS, agentTree, idleSince, isDormant, isQuiet, sessionTitle, viewEnd } from './store.mjs';
+import { DORMANT_MS, runningSince, agentTree, idleSince, isDormant, isQuiet, sessionTitle, viewEnd } from './store.mjs';
 import { ACTIVE, STATUS_LABEL, TERMINAL, fmtAgo, fmtDur, fmtTokens, h, icon, initials, move, restore, setData, setHue, setText, shellName, shellStatus, succeed, svgEl } from './ui.mjs';
 
 const CHIP_LIMIT = 14;
@@ -58,14 +58,13 @@ function since(ts, now) {
   return ago === 'now' ? 'just now' : `${ago} ago`;
 }
 
-function durationText(a, s, now) {
+function durationText(a, s, now, wall) {
   if (ACTIVE.has(a.display)) {
-    // The log has no start of a turn of the main agent; its newest prompt starts one.
-    const from = a.kind === 'main' ? s.feed.findLast((f) => f.kind === 'user')?.ts ?? startOf(a, s) : startOf(a, s);
+    const from = runningSince(a, s);
     return from == null ? '' : fmtDur(now - from);
   }
-  if (a.kind === 'main') return since(a.lastActivityAt, now);
-  if (a.display === 'idle') return since(idleSince(a), now);
+  if (a.kind === 'main') return since(a.lastActivityAt, wall);
+  if (a.display === 'idle') return since(idleSince(a), wall);
   if (a.durationMs != null) return fmtDur(a.durationMs);
   const from = startOf(a, s);
   const to = a.endedAt ?? a.lastActivityAt;
@@ -95,7 +94,7 @@ function metaItems(a) {
 
 function createCard(key, on) {
   const avatar = h('span', { class: 'avatar', 'aria-hidden': 'true' });
-  const name = h('button', { class: 'card-name', type: 'button' });
+  const name = h('button', { class: 'card-name', type: 'button', 'data-focus-key': `agent:${key}` });
   const sub = h('span', { class: 'card-sub' });
   const state = h('span', { class: 'state' });
   const dur = h('span', { class: 'card-dur' });
@@ -141,10 +140,11 @@ function createCard(key, on) {
     setText(sub, subText(a, s));
     setText(state, stateText(a, quiet));
     state.title = quiet ? `No events for ${fmtAgo(now - a.lastActivityAt)}` : '';
-    setText(dur, durationText(a, s, now));
+    setText(dur, durationText(a, s, now, ctx.wall));
 
     const c = a.current ? ctx.calls.get(a.current) : undefined;
     tool.hidden = !c;
+    setData(tool, 'focusKey', c ? `call:${c.id}` : null);
     callId = c?.id ?? null;
     if (c) {
       if (c.category !== category) {
@@ -170,7 +170,7 @@ function createCard(key, on) {
     bubble.hidden = !a.lastMessage;
     if (a.lastMessage) {
       setText(bubbleText, plain(a.lastMessage));
-      setText(bubbleAgo, since(a.lastMessageAt, now));
+      setText(bubbleAgo, since(a.lastMessageAt, ctx.wall));
     }
     if (a.lastMessageAt !== messageAt) {
       if (messageAt !== undefined && a.lastMessage && !reducedMotion.matches) {
@@ -196,14 +196,14 @@ function createChip(key, on) {
   const avatar = h('span', { class: 'avatar mini', 'aria-hidden': 'true' });
   const name = h('span', { class: 'chip-name' });
   const status = h('span', { class: 'chip-status' });
-  const el = h('button', { class: 'chip', type: 'button', onclick: () => on.onFocusAgent(key) }, avatar, name, status);
+  const el = h('button', { class: 'chip', type: 'button', 'data-focus-key': `agent:${key}`, onclick: () => on.onFocusAgent(key) }, avatar, name, status);
   function update(a, s, now, ctx) {
     setData(el, 'display', a.display);
     setData(el, 'focused', ctx.focused === a.key ? '' : null);
     setHue(el, a);
     setText(avatar, initials(a));
     setText(name, a.name ?? 'agent');
-    const dur = durationText(a, s, now);
+    const dur = durationText(a, s, now, ctx.wall);
     setText(status, [STATUS_LABEL[a.display] ?? a.display, dur].filter(Boolean).join(' · '));
     el.title = [a.name, a.description].filter(Boolean).join('\n');
   }
@@ -368,7 +368,7 @@ export function createMap(mapEl, headEl, on) {
   }
 
   return {
-    render(s, now, focus, emptyText) {
+    render(s, now, focus, emptyText, wall) {
       if ((s?.id ?? null) !== sid) {
         reset();
         sid = s?.id ?? null;
@@ -387,7 +387,7 @@ export function createMap(mapEl, headEl, on) {
 
       const calls = new Map(s.calls.map((c) => [c.id, c]));
       const focused = focus?.type === 'agent' ? focus.key : focus?.type === 'call' ? calls.get(focus.id)?.agent ?? null : null;
-      const ctx = { calls, focused };
+      const ctx = { calls, focused, wall };
       const tree = agentTree(s);
       const byKey = new Map(tree.map(({ agent }) => [agent.key, agent]));
       const byDepth = new Map();

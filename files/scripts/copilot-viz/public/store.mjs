@@ -1,5 +1,7 @@
 // Client state for the /api/stream messages. The page and the tests share this module.
 
+import { identified, listOf, record, validSession } from './schema.mjs';
+
 export const QUIET_MS = 5 * 60_000;
 const LIVE_MS = 30 * 60_000;
 // write_agent woke 90% of the idle agents within an hour. A subagent idle longer folds into a
@@ -21,19 +23,23 @@ export function createStore() {
     now: () => Date.now() + offset,
     // A snapshot replaces everything; a delta carries the full state of each changed session.
     apply(msg) {
-      if (!msg || typeof msg !== 'object') return false;
+      // The model's drain also supplies deltas without a type.
+      if (!record(msg) || !(msg.type === 'snapshot' || msg.type === 'delta' || (msg.type === undefined && Array.isArray(msg.removed)))
+        || !Number.isSafeInteger(msg.rev) || msg.rev < 0 || (msg.type !== 'snapshot' && msg.rev <= rev)
+        || (msg.ready !== undefined && typeof msg.ready !== 'boolean') || (msg.now !== undefined && !Number.isFinite(msg.now))
+        || (msg.hosts !== undefined && !listOf(msg.hosts, identified))
+        || (msg.removed !== undefined && !listOf(msg.removed, (id) => typeof id === 'string'))
+        || !listOf(msg.sessions, validSession)) return false;
       if (typeof msg.ready === 'boolean') ready = msg.ready;
       if (typeof msg.now === 'number') offset = msg.now - Date.now();
       if (Array.isArray(msg.hosts)) {
         hosts.clear();
         for (const host of msg.hosts) hosts.set(host.id, host);
       }
-      if (!Array.isArray(msg.sessions)) return false;
       if (msg.type === 'snapshot') sessions.clear();
-      else if (typeof msg.rev !== 'number' || msg.rev <= rev) return false;
       for (const s of msg.sessions) sessions.set(s.id, s);
       for (const id of msg.removed ?? []) sessions.delete(id);
-      if (typeof msg.rev === 'number') rev = msg.rev;
+      rev = msg.rev;
       return true;
     },
   };
@@ -56,7 +62,10 @@ export function isLive(s, now) {
 
 // The time a session is shown at: an ended session shows its own last minutes.
 export function viewEnd(s, now) {
-  return isLive(s, now) || s.stale ? now : Math.min(now, s.meta.lastEventAt ?? now);
+  if (s.stale) {
+    if (s.alive !== false && s.state !== 'ended' && !(s.state === 'offline' && s.meta.endedAt != null)) return now;
+  } else if (isLive(s, now)) return now;
+  return Math.min(now, s.meta.lastEventAt ?? now);
 }
 
 // When an idle agent went idle; a read of its status later does not count.
@@ -71,8 +80,18 @@ export function isDormant(agent, at) {
   return since != null && at - since > DORMANT_MS;
 }
 
+export function wallNow(s, now) {
+  return now + (s?.clockOffset ?? 0);
+}
+
 export function sessionNow(s, now) {
-  return s?.stale && s.sourceNow != null ? s.sourceNow : now + (s?.clockOffset ?? 0);
+  return s?.stale && s.sourceNow != null ? s.sourceNow : wallNow(s, now);
+}
+
+export function runningSince(a, s) {
+  if (a.kind !== 'main') return a.startedAt;
+  return a.turnStartedAt ?? s.feed.findLast((f) => f.kind === 'user')?.ts ?? a.startedAt
+    ?? s.meta.startedAt ?? s.calls.find((c) => c.agent === 'main')?.startedAt;
 }
 
 export function sessionTitle(s) {
@@ -88,23 +107,31 @@ export function sortSessions(list) {
 // Agents in tree order: each parent before its children, oldest first.
 export function agentTree(s) {
   const byParent = new Map();
+  const keys = new Set(s.agents.map((a) => a.key));
   for (const a of s.agents) {
     if (a.kind === 'main') continue;
-    const p = s.agents.some((x) => x.key === a.parent) ? a.parent : 'main';
+    const p = keys.has(a.parent) ? a.parent : 'main';
     if (!byParent.has(p)) byParent.set(p, []);
     byParent.get(p).push(a);
   }
   const out = [];
-  const walk = (key, depth) => {
-    const list = (byParent.get(key) ?? []).sort((x, y) => (x.startedAt ?? 0) - (y.startedAt ?? 0));
-    for (const a of list) {
-      out.push({ agent: a, depth });
-      if (depth < 8) walk(a.key, depth + 1);
-    }
-  };
   const main = s.agents.find((a) => a.kind === 'main');
   if (main) out.push({ agent: main, depth: 0 });
-  walk('main', 1);
+  for (const list of byParent.values()) list.sort((x, y) => (x.startedAt ?? 0) - (y.startedAt ?? 0));
+  const stack = [];
+  const pushChildren = (key, depth) => {
+    const list = byParent.get(key) ?? [];
+    for (let i = list.length - 1; i >= 0; i--) stack.push({ agent: list[i], depth });
+  };
+  const seen = new Set(['main']);
+  pushChildren('main', 1);
+  while (stack.length) {
+    const row = stack.pop();
+    if (seen.has(row.agent.key)) continue;
+    seen.add(row.agent.key);
+    out.push(row);
+    pushChildren(row.agent.key, Math.min(row.depth + 1, 8));
+  }
   return out;
 }
 

@@ -4,7 +4,7 @@ import { createDetail } from './detail.mjs';
 import { createFeed } from './feed.mjs';
 import { createMap } from './map.mjs';
 import { createSessions } from './sessions.mjs';
-import { activityIn, createStore, isLive, sessionNow, sessionTitle, sortSessions } from './store.mjs';
+import { activityIn, createStore, isLive, sessionNow, sessionTitle, sortSessions, viewEnd, wallNow } from './store.mjs';
 import { createTimeline } from './timeline.mjs';
 import { CATEGORIES, CATEGORY_LABEL, fmtAgo, h, icon, reconcile, setData, setText } from './ui.mjs';
 
@@ -18,7 +18,7 @@ const REPORT_RETRY_MS = 3000;
 // Follow moves only to a session that is more urgent than the one on screen.
 const URGENCY = { attention: 0, running: 1 };
 const CONN_TEXT = {
-  connecting: 'Connecting…', loading: 'Reading logs…', live: 'Live', reconnecting: 'Reconnecting…',
+  connecting: 'Connecting…', loading: 'Connected · reading sources…', live: 'Live', reconnecting: 'Reconnecting…',
   offline: 'Offline', unpaired: 'Not paired', refused: 'Refused',
 };
 const PAIR_TEXT = {
@@ -71,6 +71,13 @@ function loadPrefs() {
 const store = createStore();
 const view = { selected: null, follow: true, focus: null, ...loadPrefs() };
 let synced = false;
+let receivedSnapshot = false;
+let frozenAt = store.now();
+let revision = 0;
+let tickTimer = 0;
+let reopenDelay = REOPEN_MS;
+const inputs = new Map();
+
 let token = null;
 let pairError = null;
 let source = null;
@@ -87,13 +94,25 @@ let hostOptions = '';
 const hostRows = new Map();
 
 const sessions = createSessions($('session-list'), $('sessions-empty'), { onSelect: choose });
-const map = createMap($('map'), $('session-head'), { onFocusAgent: focusAgent, onFocusCall: focusCall, onChange: schedule });
+const map = createMap($('map'), $('session-head'), { onFocusAgent: focusAgent, onFocusCall: focusCall, onChange: () => invalidate('map') });
 const timeline = createTimeline($('timeline'), $('timeline-wrap'), $('timeline-tip'), $('probe'), $('timeline-say'), { onFocusCall: focusCall });
 const feed = createFeed($('feed'), $('feed-jump'), { onFocusAgent: focusAgent, onFocusCall: focusCall });
 const detail = createDetail(
   { panel: $('detail'), title: $('detail-title'), body: $('detail-body'), close: $('detail-close'), cover: document.querySelector('.feed-panel') },
-  { fetchCall, onClose: closeDetail, onFocusCall: focusCall, onChange: schedule },
+  { fetchCall, onClose: closeDetail, onFocusCall: focusCall, onChange: () => invalidate('detail'), isConnected: () => conn === 'live' },
 );
+
+function changed(name, ...next) {
+  const prev = inputs.get(name);
+  if (prev && next.every((value, i) => value === prev[i])) return false;
+  inputs.set(name, next);
+  return true;
+}
+
+function invalidate(name) {
+  inputs.delete(name);
+  schedule();
+}
 
 function schedule() {
   if (!frame) frame = requestAnimationFrame(render);
@@ -117,7 +136,7 @@ function closeDetail() {
 }
 
 function choose(id) {
-  if (id === view.selected) return;
+  if (id === view.selected && !view.follow) return;
   view.selected = id;
   view.focus = null;
   view.follow = false;
@@ -242,6 +261,12 @@ function counts(all, now) {
   return n;
 }
 
+let lastCounts;
+function cachedCounts(now) {
+  if (changed('counts', revision, view.host, Math.floor(now / 1000))) lastCounts = counts(store.sessions.values(), now);
+  return lastCounts;
+}
+
 function renderStats(n) {
   stat(el.live, n.live);
   stat(el.working, n.working);
@@ -265,7 +290,7 @@ function needsTick(now) {
   if ([...store.hosts.values()].some((h) => h.retryAt > now)) return true;
   for (const s of store.sessions.values()) {
     if (s.state === 'running' || s.state === 'attention') return true;
-    if (!s.stale && s.meta.lastEventAt != null && sessionNow(s, now) - s.meta.lastEventAt < SECONDS_MS) return true;
+    if (s.meta.lastEventAt != null && wallNow(s, now) - s.meta.lastEventAt < SECONDS_MS) return true;
   }
   return false;
 }
@@ -308,32 +333,43 @@ function renderHosts(now, s) {
 function render() {
   frame = 0;
   const now = store.now();
-  if (synced && view.host !== 'all' && !store.hosts.has(view.host)) view.host = 'all';
+  const at = conn === 'live' ? now : frozenAt;
+  const pinned = !view.follow && store.sessions.get(view.selected);
+  if (synced && view.host !== 'all' && (!store.hosts.has(view.host) || (pinned && !inHost(pinned)))) view.host = 'all';
   const all = [...store.sessions.values()].filter(inHost);
-  let shown = visible(all, now);
-  if (synced && pick(shown)) shown = visible(all, now);
+  let shown = visible(all, at);
+  if (synced && pick(shown)) shown = visible(all, at);
   syncHash();
-  const s = (view.selected && store.sessions.get(view.selected)) || null;
-  const clock = sessionNow(s, now);
-
-  renderHosts(now, s);
-  sessions.render(shown, view.selected, now, { ready: store.ready, total: all.length, filter: view.filter });
-  map.render(s, clock, view.focus, mapEmpty(all, shown));
-  timeline.render(s, clock, view.zoom, view.focus);
-  feed.render(s, clock);
-  detail.render(s, view.focus, clock);
-
-  const n = counts(all, now);
-  renderStats(n);
-  renderTitle(n.waitingSessions);
+  const s = store.sessions.get(view.selected) ?? null;
+  const clock = sessionNow(s, at);
+  const wall = wallNow(s, now);
+  const second = (t) => Math.floor(t / 1000);
+  if (changed('hosts', revision, view.host, view.selected, second(now))) renderHosts(now, s);
+  if (changed('sessions', revision, view.host, view.filter, view.selected, second(now), conn)) {
+    sessions.render(shown, view.selected, now, { ready: store.ready, total: all.length, filter: view.filter, at });
+  }
+  const empty = s ? '' : mapEmpty(all, shown);
+  if (changed('map', s, view.focus, empty, s && second(clock), s && second(wall))) map.render(s, clock, view.focus, empty, wall);
+  if (changed('timeline', s, view.zoom, view.focus, s && second(viewEnd(s, clock)))) timeline.render(s, clock, view.zoom, view.focus);
+  if (changed('feed', s)) feed.render(s);
+  if (changed('detail', view.focus && s, view.focus, view.focus && second(clock), conn)) detail.render(s, view.focus, clock);
+  const n = cachedCounts(at);
+  if (changed('stats', n.live, n.working, n.waiting, n.calls)) renderStats(n);
+  renderTitle(conn === 'live' ? n.waitingSessions : 0);
 }
 
 // --- the connection ---------------------------------------------------------------------
 
-function setConn(state) {
+function setConn(state, text = CONN_TEXT[state]) {
+  if (state !== 'live') {
+    if (conn === 'live') frozenAt = store.now();
+    clearInterval(tickTimer);
+    tickTimer = 0;
+  } else if (!tickTimer) tickTimer = setInterval(tick, 1000);
   conn = state;
+  if (state !== 'live') renderTitle(0);
   setData(el.conn, 'state', state === 'refused' ? 'offline' : state);
-  setText(el.conn, CONN_TEXT[state]);
+  setText(el.conn, text);
 }
 
 function showOverlay(title, text, command = true) {
@@ -353,6 +389,7 @@ function hideOverlay() {
 }
 
 function closeSource() {
+  receivedSnapshot = false;
   clearTimeout(reopenTimer);
   reopenTimer = 0;
   clearTimeout(reportTimer);
@@ -378,7 +415,7 @@ function reportView() {
     body: JSON.stringify({ viewer: id, visible: document.visibilityState === 'visible', seq }), cache: 'no-store', keepalive: true,
   }).then((r) => {
     // 404: the stream closed, and the next one reports again.
-    if (r.ok || r.status === 404) return;
+    if (seq !== reportSeq || id !== viewer || r.ok || r.status === 404) return;
     if (r.status === 401) {
       if (source) probe(source);
       return;
@@ -390,6 +427,7 @@ function reportView() {
 function unpaired() {
   closeSource();
   setConn('unpaired');
+  schedule();
   showOverlay('Not paired', PAIR_TEXT[pairError] ?? 'This page has no key for the running server. Run copilot-viz to open a paired page.');
 }
 
@@ -397,16 +435,18 @@ function connect() {
   closeSource();
   if (!token) return unpaired();
   if (conn !== 'offline' && conn !== 'reconnecting') setConn('connecting');
+  schedule();
   const es = new EventSource(`/api/stream?token=${encodeURIComponent(token)}`);
   source = es;
   es.onopen = () => {
-    if (source !== es) return;
+    if (source !== es || es.readyState === EventSource.CLOSED) return;
     // The server opens the stream only for its token, so the error of an earlier pairing is over.
     pairError = null;
+    setConn('loading');
     hideOverlay();
   };
   es.onmessage = (e) => {
-    if (source !== es) return;
+    if (source !== es || es.readyState === EventSource.CLOSED) return;
     let msg;
     try {
       msg = JSON.parse(e.data);
@@ -414,19 +454,32 @@ function connect() {
       return;
     }
     // The rows of a new server's sessions differ by epoch, so they are patched, not built again.
-    if (msg?.type === 'snapshot') synced = true;
-    store.apply(msg);
+    if (msg?.type !== 'snapshot' && !(receivedSnapshot && msg?.type === 'delta')) return;
+    if (!store.apply(msg)) return;
+    revision++;
+    if (msg.type === 'snapshot') {
+      synced = receivedSnapshot = true;
+      reopenDelay = REOPEN_MS;
+    }
     if (typeof msg?.viewer === 'string' && msg.viewer !== viewer) {
       viewer = msg.viewer;
       reportView();
     }
-    renderTitle(counts(store.sessions.values(), store.now()).waitingSessions);
+    const liveHosts = [...store.hosts.values()].filter((h) => h.state === 'live').length;
+    const status = !store.ready ? CONN_TEXT.loading : liveHosts === store.hosts.size ? 'Live' : `Connected · ${liveHosts}/${store.hosts.size} sources live`;
+    setConn('live', status);
+    renderTitle(cachedCounts(store.now()).waitingSessions);
     hideOverlay();
-    setConn(store.ready ? 'live' : 'loading');
     schedule();
   };
   es.onerror = () => {
-    if (source === es) probe(es);
+    if (source !== es || reopenTimer) return;
+    es.close();
+    receivedSnapshot = false;
+    schedule();
+    viewer = null;
+    setConn('reconnecting');
+    probe(es);
   };
   return undefined;
 }
@@ -437,7 +490,7 @@ async function probe(es) {
   probing = es;
   let status = 0;
   try {
-    status = (await fetch('/api/call?sid=-&id=-', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })).status;
+    status = (await fetch('/api/call?sid=-&id=-', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: AbortSignal.timeout(5000) })).status;
   } catch {
     // The server is not running.
   }
@@ -450,6 +503,7 @@ async function probe(es) {
   if (status === 403) {
     closeSource();
     setConn('refused');
+    schedule();
     showOverlay('Access refused', 'The server serves only the user that started it, at 127.0.0.1 or localhost. Open the link that copilot-viz prints.', false);
     return;
   }
@@ -460,22 +514,24 @@ async function probe(es) {
   } else {
     setConn('reconnecting');
   }
-  // A browser retries a stream that is CONNECTING, but not one that it closed.
+  // The failed stream was closed before probing, so only this timer can reopen it.
   if (es.readyState === EventSource.CLOSED && !reopenTimer) {
     reopenTimer = setTimeout(() => {
       reopenTimer = 0;
       if (source === es) connect();
-    }, REOPEN_MS);
+    }, reopenDelay);
+    reopenDelay = Math.min(60_000, reopenDelay * 2);
   }
 }
 
 async function fetchCall(sid, id, epoch) {
+  const es = source;
   const r = await fetch(`/api/call?sid=${encodeURIComponent(sid)}&id=${encodeURIComponent(id)}&epoch=${encodeURIComponent(epoch)}`, {
     headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
   });
   if (r.status === 404) return null;
   if (!r.ok) {
-    if (r.status === 401 && source) probe(source);
+    if (r.status === 401 && es && source === es) probe(es);
     const body = await r.json();
     throw new Error(body.error ?? `HTTP ${r.status}`);
   }
@@ -537,11 +593,9 @@ addEventListener('keydown', (e) => {
 
 addEventListener('hashchange', () => {
   const id = hashId();
-  if (!id || id === view.selected) return;
   view.selected = id;
-  view.host = 'all';
   view.focus = null;
-  view.follow = false;
+  view.follow = !id;
   syncControls();
   schedule();
 });
@@ -570,20 +624,19 @@ applyTheme(load(THEME_KEY));
 const pinned = hashId();
 if (pinned) {
   view.selected = pinned;
-  view.host = 'all';
   view.follow = false;
 }
 syncControls();
 setConn('connecting');
 schedule();
 let tickMinute = -1;
-setInterval(() => {
+function tick() {
   const now = store.now();
   const minute = Math.floor(now / 60_000);
   if (minute === tickMinute && !needsTick(now)) return;
   tickMinute = minute;
   schedule();
-}, 1000);
+}
 pair().then((r) => {
   token = r.token;
   pairError = r.error ?? null;

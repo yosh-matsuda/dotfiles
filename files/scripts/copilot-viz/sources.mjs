@@ -1,14 +1,11 @@
 import { hostname } from 'node:os';
 import { createCollector } from './collector.mjs';
+import { validSessionId } from './monitor.mjs';
+import { validSession } from './public/schema.mjs';
 import { createRemote } from './remote.mjs';
 import { unavailable } from './wire.mjs';
 
 const ACTIVE = new Set(['running', 'starting', 'input', 'waiting']);
-const validSession = (s) => s && typeof s.id === 'string' && s.id.length <= 200 && !s.id.includes('/')
-  && typeof s.epoch === 'string' && s.epoch.length <= 200 && s.meta && typeof s.meta === 'object'
-  && ['agents', 'calls', 'feed', 'shells', 'activity'].every((k) => Array.isArray(s[k]))
-  && s.agents.every((a) => a && typeof a.key === 'string' && a.tokens && typeof a.tokens === 'object')
-  && s.calls.every((c) => c && typeof c.id === 'string');
 
 export function createSources({ remotes = [], sinceMs, onMessage, onError, remoteFactory = createRemote }) {
   const hosts = new Map();
@@ -16,7 +13,7 @@ export function createSources({ remotes = [], sinceMs, onMessage, onError, remot
   let rev = 0;
   let stopped = false;
   const makeHost = (id, name, remote) => {
-    const h = { id, name, remote, state: 'connecting', error: null, retryAt: null, lastSeen: null, settled: false, generation: 0, raw: new Map(), offset: 0, sourceNow: null };
+    const h = { id, name, remote, state: 'connecting', error: null, retryAt: null, lastSeen: null, settled: false, generation: 0, raw: new Map(), invalid: new Set(), offset: 0, sourceNow: null };
     hosts.set(id, h);
     return h;
   };
@@ -52,25 +49,38 @@ export function createSources({ remotes = [], sinceMs, onMessage, onError, remot
   function receive(h, msg) {
     if (stopped) return;
     const now = Date.now();
+    const batch = msg.type === 'snapshot' || msg.type === 'delta';
+    if (batch && (!Number.isFinite(msg.now) || !Array.isArray(msg.sessions)
+      || (msg.removed !== undefined && (!Array.isArray(msg.removed) || !msg.removed.every(validSessionId))))) {
+      throw new Error('Invalid sessions from the SSH worker.');
+    }
     h.lastSeen = now;
     h.sourceNow = msg.now;
-    if (msg.type === 'heartbeat') return;
-    if (msg.type === 'snapshot' || msg.type === 'delta') {
-      if (!Number.isFinite(msg.now) || !Array.isArray(msg.sessions) || !msg.sessions.every(validSession)
-        || (msg.removed !== undefined && (!Array.isArray(msg.removed) || !msg.removed.every((id) => typeof id === 'string')))) {
-        throw new Error('Invalid sessions from the SSH worker.');
+    if (batch) {
+      const accepted = [];
+      const present = new Set();
+      for (const s of msg.sessions) {
+        const id = typeof s?.id === 'string' ? s.id : null;
+        present.add(id);
+        if (validSessionId(id) && validSession(s) && s.epoch.length <= 200) {
+          accepted.push(s);
+          h.invalid.delete(id);
+        } else if (!h.invalid.has(id)) {
+          h.invalid.add(id);
+          onError(new Error(`${h.name}: invalid session ${id ?? '(missing ID)'}.`));
+        }
       }
       const removed = [];
+      const remove = (id) => {
+        if (h.raw.delete(id)) removed.push(sessionId(h, id));
+      };
       if (msg.type === 'snapshot') {
-        const next = new Set(msg.sessions.map((s) => s.id));
-        for (const id of h.raw.keys()) if (!next.has(id)) removed.push(sessionId(h, id));
-        h.raw.clear();
+        // An invalid replacement leaves the last accepted copy alone.
+        for (const id of h.raw.keys()) if (!present.has(id)) remove(id);
         if (h.state !== 'live') h.generation++;
       }
-      for (const id of msg.removed ?? []) {
-        if (h.raw.delete(id)) removed.push(sessionId(h, id));
-      }
-      for (const s of msg.sessions) h.raw.set(s.id, s);
+      for (const id of msg.removed ?? []) if (!present.has(id)) remove(id);
+      for (const s of accepted) h.raw.set(s.id, s);
       h.offset = h.remote ? msg.now - now : 0;
       if (msg.ready) {
         h.state = 'live';
@@ -78,7 +88,7 @@ export function createSources({ remotes = [], sinceMs, onMessage, onError, remot
         h.error = null;
         h.retryAt = null;
       }
-      publish(h, msg.sessions.map((s) => s.id), removed);
+      publish(h, accepted.map((s) => s.id), removed);
     } else if (msg.type === 'status') {
       if (msg.ready) {
         h.state = 'live';
@@ -94,12 +104,17 @@ export function createSources({ remotes = [], sinceMs, onMessage, onError, remot
       sinceMs,
       onMessage: (msg) => receive(h, msg),
       onState: (state, error, retryAt) => {
+        const leavingLive = h.state === 'live' && state !== 'live';
         h.state = state;
         h.error = error;
         h.retryAt = retryAt;
         if (state === 'offline' || state === 'paused') h.settled = true;
         if (state === 'offline') onError(new Error(`${h.name}: ${error}`));
-        publish(h, [...h.raw.keys()]);
+        try {
+          publish(h, leavingLive ? [...h.raw.keys()] : []);
+        } catch (e) {
+          onError(e);
+        }
       },
     });
   }

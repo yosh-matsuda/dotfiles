@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 export const HERE = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_PORT = 7421;
-const SERVER_FILES = ['model.mjs', 'monitor.mjs', 'runtime.mjs', 'server.mjs', 'collector.mjs', 'sources.mjs', 'remote.mjs', 'wire.mjs', 'worker.mjs'];
+const SERVER_FILES = ['cli.mjs', 'model.mjs', 'monitor.mjs', 'runtime.mjs', 'server.mjs', 'collector.mjs', 'sources.mjs', 'remote.mjs', 'wire.mjs', 'worker.mjs'];
 const HAS_PROC = existsSync('/proc/self/stat');
 
 // Only the owner may enter the directory, because the socket hands out pairing codes.
@@ -42,8 +42,8 @@ export const socketPath = (dir) => join(dir, 'control.sock');
 export function running(pid) {
   try {
     process.kill(pid, 0);
-  } catch (e) {
-    return e.code === 'EPERM';
+  } catch {
+    return false;
   }
   if (!HAS_PROC) return true;
   try {
@@ -79,7 +79,7 @@ export function control(sock, method, path, timeoutMs = 3000) {
       });
       res.on('error', reject);
       res.on('close', () => {
-        if (!res.complete) reject(new Error(`the reply from ${sock} ended early`));
+        if (!res.complete) reject(Object.assign(new Error(`the reply from ${sock} ended early`), { code: 'ECONNRESET' }));
       });
     });
     const timer = setTimeout(() => req.destroy(Object.assign(new Error(`no reply from ${sock}`), { code: 'ETIMEDOUT' })), timeoutMs);

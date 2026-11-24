@@ -1,6 +1,7 @@
 // The panel with the details of one agent or one tool call. Each view builds its parts once
 // and then changes only the text that changed, so that a selection or a scroll survives.
 
+import { runningSince } from './store.mjs';
 import { ACTIVE, STATUS_LABEL, TERMINAL, callRow, callSig, callState, current, fmtClock, fmtDur, fmtTokens, h, reconcile, setText } from './ui.mjs';
 
 const RECENT_CALLS = 20;
@@ -54,11 +55,16 @@ function startOf(a, s) {
   return a.kind === 'main' ? s.meta.startedAt : null;
 }
 
-function ranFor(a, s, now) {
+export function ranFor(a, s, now) {
+  if (ACTIVE.has(a.display)) {
+    if (['idle', 'lost', 'unknown'].includes(a.status)) return '';
+    const from = runningSince(a, s);
+    return from == null ? '' : fmtDur(now - from);
+  }
+  if (!TERMINAL.has(a.display)) return '';
+  if (a.durationMs != null) return fmtDur(a.durationMs);
   const from = startOf(a, s);
-  if (a.durationMs != null && !ACTIVE.has(a.display)) return fmtDur(a.durationMs);
   if (from == null) return '';
-  if (ACTIVE.has(a.display) || a.display === 'idle') return a.kind === 'main' ? '' : fmtDur(now - from);
   const to = a.endedAt ?? a.lastActivityAt;
   return to == null ? '' : fmtDur(to - from);
 }
@@ -184,59 +190,94 @@ function callView(id, on, details) {
   };
 }
 
-export function createDetail({ panel, title, body, close, cover }, on) {
+export function createCallDetails(on) {
   // The text of a call changes only when its detail count does. A new epoch means the server
   // read the session again.
   const fetched = new Map();
+  let active = null;
+  let timer = 0;
+
+  function clear() {
+    active = null;
+    clearTimeout(timer);
+    timer = 0;
+  }
+
+  function retryIn(delay) {
+    if (!timer) timer = setTimeout(() => {
+      timer = 0;
+      on.onChange();
+    }, delay);
+  }
+
+  function get(s, c) {
+    const k = `${s.id}\u0000${s.epoch}\u0000${c.id}\u0000${c.detail}`;
+    const d = fetched.get(k);
+    if (k !== active || s.stale || !on.isConnected()) clear();
+    if (s.stale || !on.isConnected()) return d;
+    active = k;
+    if (d) {
+      if (d.state !== 'failed') return d;
+      const remaining = d.retryAt - Date.now();
+      if (remaining > 0) {
+        retryIn(remaining);
+        return d;
+      }
+    }
+    const next = { state: 'loading', data: null };
+    fetched.set(k, next);
+    if (fetched.size > 200) fetched.delete(fetched.keys().next().value);
+    on.fetchCall(s.id, c.id, s.epoch).then((data) => {
+      next.state = 'done';
+      next.data = data;
+      if (active === k) clear();
+    }, (e) => {
+      next.state = 'failed';
+      next.error = e.message;
+      next.retryAt = Date.now() + RETRY_MS;
+      if (active === k) retryIn(RETRY_MS);
+    }).finally(() => on.onChange());
+    return next;
+  }
+  return { get, clear };
+}
+
+export function createDetail({ panel, title, body, close, cover }, on) {
+  const details = createCallDetails(on);
   let key = null;
   let view = null;
   let opener = null;
-  // At this width the panel lies over the activity column, so the column leaves the tab order.
+  const background = [...document.querySelectorAll('.layout > *')];
+  // On wide screens the map and timeline remain usable beside the detail panel.
   const wide = matchMedia('(min-width: 1181px)');
   const syncCover = () => {
-    if (cover) cover.inert = !panel.hidden && wide.matches;
+    for (const el of background) el.inert = !panel.hidden && (!wide.matches || el === cover);
+    if (!panel.hidden && document.activeElement?.closest('[inert]') && !panel.closest('[inert]')) title.focus();
   };
   wide.addEventListener('change', syncCover);
-
-  function details(s, c) {
-    const k = `${s.id}\u0000${s.epoch}\u0000${c.id}\u0000${c.detail}`;
-    let d = fetched.get(k);
-    if (!d || (d.state === 'failed' && Date.now() - d.at > RETRY_MS)) {
-      const next = { state: 'loading', data: null, at: 0 };
-      d = next;
-      fetched.set(k, next);
-      if (fetched.size > 200) fetched.delete(fetched.keys().next().value);
-      on.fetchCall(s.id, c.id, s.epoch).then((data) => {
-        next.state = 'done';
-        next.data = data;
-      }, (e) => {
-        next.state = 'failed';
-        next.error = e.message;
-        next.at = Date.now();
-      }).finally(() => on.onChange());
-    }
-    return d;
-  }
 
   function hide() {
     if (panel.hidden) return;
     const inside = panel.contains(document.activeElement);
     panel.hidden = true;
+    details.clear();
     syncCover();
     key = null;
     view = null;
     body.replaceChildren();
     const back = returnTarget(opener);
-    if ((inside || document.activeElement === document.body) && back) back.focus({ preventScroll: true });
+    if ((!wide.matches || inside || document.activeElement === document.body) && back && !back.closest('[inert]')) back.focus({ preventScroll: true });
     opener = null;
   }
 
   // An update can have replaced the element that opened the panel, or hidden it, as it hides the
   // tool row of a card whose call ended. Focus then goes to the card, or to the chosen session.
-  function returnTarget(node) {
-    const el = current(node);
+  function returnTarget(saved) {
+    const el = current(saved?.el);
+    const same = saved?.focusKey && saved.panel?.querySelector(`[data-focus-key="${CSS.escape(saved.focusKey)}"]`);
+    const original = !saved?.focusKey || el?.dataset.focusKey === saved.focusKey ? el : null;
     const card = el?.closest('.card')?.querySelector('.card-name');
-    return [el, card, document.querySelector('.session[aria-current="true"]')].find((x) => x?.checkVisibility()) ?? null;
+    return [original, same, card, saved?.panel, document.querySelector('.session[aria-current="true"]')].find((x) => x?.checkVisibility()) ?? null;
   }
 
   close.addEventListener('click', () => on.onClose());
@@ -247,13 +288,18 @@ export function createDetail({ panel, title, body, close, cover }, on) {
       if (!next) return hide();
       if (panel.hidden) {
         const active = document.activeElement;
-        opener = active instanceof HTMLElement && active !== document.body ? active : null;
+        if (active instanceof HTMLElement && active !== document.body) {
+          const parent = active.closest('.panel');
+          if (parent) parent.tabIndex = -1;
+          opener = { el: active, panel: parent, focusKey: active.dataset.focusKey };
+        }
         panel.hidden = false;
         syncCover();
       }
       if (next !== key) {
+        details.clear();
         key = next;
-        view = focus.type === 'agent' ? agentView(focus.key, on) : callView(focus.id, on, details);
+        view = focus.type === 'agent' ? agentView(focus.key, on) : callView(focus.id, on, details.get);
         body.replaceChildren(...view.els);
         body.scrollTop = 0;
         title.focus({ preventScroll: true });

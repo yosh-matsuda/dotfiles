@@ -1,6 +1,6 @@
 // The list of sessions on the left.
 
-import { sessionNow, sessionTitle, sparkline } from './store.mjs';
+import { sessionNow, sessionTitle, sparkline, wallNow } from './store.mjs';
 import { fmtAgo, h, reconcile, setData, setText, shortPath, svgEl } from './ui.mjs';
 
 const SPARK_MINUTES = 30;
@@ -58,7 +58,7 @@ export function createSessions(listEl, emptyEl, { onSelect }) {
     const p = {
       title: h('span', { class: 's-title' }), place: h('span', { class: 's-place' }),
       badges: h('span', { class: 's-badges', hidden: true }), sr: h('span', { class: 'sr' }), ago: h('span', { class: 's-ago' }),
-      path, gate: null, badgeSig: '[]',
+      path, badgeSig: '[]',
     };
     p.button = h('button', { class: 'session', type: 'button', onclick: () => onSelect(sid) },
       h('span', { class: 'dot', 'aria-hidden': 'true' }),
@@ -70,9 +70,9 @@ export function createSessions(listEl, emptyEl, { onSelect }) {
   }
 
   function update(p, s, now, minute) {
-    const gate = `${s.epoch}|${s.rev}|${minute}`;
-    if (p.gate === gate) return;
-    p.gate = gate;
+    if (p.session === s && p.minute === minute) return;
+    p.session = s;
+    p.minute = minute;
     setData(p.button, 'state', s.state);
     const title = sessionTitle(s);
     setText(p.title, title);
@@ -92,16 +92,16 @@ export function createSessions(listEl, emptyEl, { onSelect }) {
   }
 
   return {
-    render(list, selected, now, { ready, total, filter }) {
+    render(list, selected, now, { ready, total, filter, at }) {
       reconcile(listEl, list.map((s) => ({ key: s.id, sig: '', s })), cache, (e) => build(e.s.id));
       for (const s of list) {
-        const clock = sessionNow(s, now);
+        const clock = sessionNow(s, at);
         const p = rows.get(cache.get(s.id).el);
         update(p, s, clock, Math.floor(clock / 60_000));
         const current = s.id === selected ? 'true' : 'false';
         if (p.button.getAttribute('aria-current') !== current) p.button.setAttribute('aria-current', current);
-        const at = s.meta.lastEventAt;
-        setText(p.ago, at == null ? '' : fmtAgo(clock - at));
+        const event = s.meta.lastEventAt;
+        setText(p.ago, event == null ? '' : fmtAgo(wallNow(s, now) - event));
       }
       let empty = '';
       if (!list.length) {

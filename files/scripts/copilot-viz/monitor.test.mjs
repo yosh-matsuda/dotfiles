@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, writeFile, appendFile, rename, truncate, rm, utimes } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { chmod, mkdtemp, mkdir, open, symlink, writeFile, appendFile, rename, truncate, rm, utimes } from 'node:fs/promises';
+import { execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { createCollector } from './collector.mjs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createMonitor, isCopilotArgv, parseWorkspaceYaml, shellProcs } from './monitor.mjs';
+import { createMonitor, isCopilotArgv, parseWorkspaceYaml, psOwnsLock, shellProcs } from './monitor.mjs';
 
 function fakeModel() {
   const m = { events: [], resets: 0, meta: {} };
@@ -184,4 +186,116 @@ test('shellProcs lists the children that lead their own session', { skip: !exist
   assert.ok(Math.abs(p.start - Date.now()) < 5000, `starts at ${new Date(p.start).toISOString()}`);
   assert.ok(Number.isInteger(p.ticks));
   assert.equal(procs.some((x) => x.pid === tool.pid), false);
+});
+
+test('ps elapsed time distinguishes a lock owner from a reused PID', () => {
+  const now = 200_000_000;
+  for (const [time, seconds] of [['01:02', 62], ['03:01:02', 10862], ['1-03:01:02', 97262]]) {
+    const lock = now - seconds * 1000;
+    assert.equal(psOwnsLock(`  ${time} /bin/copilot --resume`, lock - 1999, now), true);
+    assert.equal(psOwnsLock(`${time} /bin/copilot`, lock - 2001, now), false);
+    assert.equal(psOwnsLock(`${time} /bin/sleep`, lock, now), false);
+  }
+  assert.equal(psOwnsLock('unknown /bin/copilot', now, now), null);
+});
+
+test('workspace block scalars accept either order of indentation and chomping', () => {
+  for (const header of ['|2-', '|-2']) assert.equal(parseWorkspaceYaml(`name: ${header}\n  one\n  two`).name, 'one\ntwo');
+});
+
+test('failed lock listings and workspace reads are retried without an mtime change', { skip: process.getuid?.() === 0 }, async (t) => {
+  const { home, dir, log } = await setup();
+  const yaml = join(dir, 'workspace.yaml');
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const model = fakeModel();
+  const errors = [];
+  const mon = createMonitor({ model, home, onError: (e) => errors.push(e) });
+  await writeFile(log, '');
+  await writeFile(yaml, 'name: recovered', { mode: 0 });
+  await chmod(dir, 0o300);
+  try {
+    await mon.sync();
+    assert.equal(model.meta.alive, null);
+    assert.equal(errors[0]?.code, 'EACCES');
+  } finally {
+    await chmod(dir, 0o700);
+    await chmod(yaml, 0o600);
+  }
+  await mon.sync();
+  assert.equal(model.meta.alive, false);
+  assert.equal(model.meta.name, 'recovered');
+});
+
+test('an unreadable hold path or foreign process is not proof of ownership', { skip: !existsSync('/proc/self/cmdline') }, async (t) => {
+  const { home, dir, log } = await setup();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const proc = spawn(process.execPath, ['-e', 'setInterval(() => {}, 60000)', '/bin/copilot']);
+  t.after(() => proc.kill());
+  await once(proc, 'spawn');
+  await writeFile(join(dir, `inuse.${proc.pid}.lock`), '');
+  const hold = `inuse.${proc.pid}.hold`;
+  await symlink(hold, join(dir, hold));
+  await writeFile(log, '');
+  const model = fakeModel();
+  const mon = createMonitor({ model, home });
+  await mon.sync();
+  assert.equal(model.meta.alive, null);
+  await rm(join(dir, hold));
+  t.mock.method(process, 'getuid', () => -1);
+  await mon.sync();
+  assert.equal(model.meta.alive, false);
+});
+
+test('collector publishes a finished running session while the next file is still opening', { timeout: 5000 }, async (t) => {
+  const { home, dir, log } = await setup();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const proc = spawn(process.execPath, ['-e', 'setInterval(() => {}, 60000)', '/bin/copilot']);
+  await once(proc, 'spawn');
+  t.after(() => proc.kill());
+  await writeFile(join(dir, `inuse.${proc.pid}.lock`), '');
+  await writeFile(log, line('session.start', {}));
+  const other = join(home, 'session-state', 'slow');
+  await mkdir(other);
+  const fifo = join(other, 'events.jsonl');
+  execFileSync('mkfifo', [fifo]);
+  const messages = [];
+  const collector = createCollector({ home, onMessage: (m) => messages.push(m) });
+  t.after(() => collector.stop());
+  const started = collector.start();
+  try {
+    for (const until = Date.now() + 3000; !messages.length && Date.now() < until;) await new Promise((r) => setTimeout(r, 15));
+    assert.deepEqual(messages[0]?.sessions.map((s) => s.id), ['sid']);
+    assert.deepEqual(collector.snapshot().sessions.map((s) => s.id), ['sid']);
+  } finally {
+    await (await open(fifo, 'w')).close();
+    await started;
+  }
+  assert.deepEqual(collector.snapshot().sessions.map((s) => s.id).sort(), ['sid', 'slow']);
+});
+
+test('collector clears timers after startup fails', async (t) => {
+  const { home, log } = await setup();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  await writeFile(log, '');
+  const timers = new Set();
+  t.mock.method(globalThis, 'setInterval', () => { const timer = {}; timers.add(timer); return timer; });
+  t.mock.method(globalThis, 'clearInterval', (timer) => timers.delete(timer));
+  const collector = createCollector({ home: log });
+  await assert.rejects(collector.start(), { code: 'ENOTDIR' });
+  assert.equal(timers.size, 0);
+});
+
+test('an empty collector announces ready when a blocked flush resumes', async (t) => {
+  const { home } = await setup();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const messages = [];
+  let blocked = true;
+  const collector = createCollector({ home, canFlush: () => !blocked, onMessage: (m) => messages.push(m) });
+  t.after(() => collector.stop());
+  await collector.start();
+  assert.deepEqual(messages, []);
+  blocked = false;
+  collector.flush();
+  collector.flush();
+  assert.deepEqual(messages.map((m) => [m.type, m.ready]), [['status', true]]);
 });
