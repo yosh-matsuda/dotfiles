@@ -310,7 +310,7 @@ herdr infers Copilot's state from the screen, so it shows at most that a session
 
 [Copilot Viz](https://github.com/yosh-matsuda/copilot-viz) shows the agents, subagents, tool calls, and background shells of Copilot CLI sessions in a browser, on this machine and over SSH. It reads the logs of terminal and VS Code agent-host sessions without changing them. The dashboard is maintained in its own repository; this repository installs the npm package.
 
-The `brew` role installs or upgrades `npm_tools` from [group_vars/all.yml](group_vars/all.yml) after installing Node.js. npm tools go into each user's `~/.local`, with commands in `~/.local/bin`, rather than the shared Homebrew prefix. Copilot Viz requires Node.js 22 or later; npm engine checks are enforced during installation. After Homebrew is installed, update only these tools with:
+The `brew` role installs or upgrades Copilot Viz from npm on WSL only, after installing Node.js. It goes into the user's `~/.local`, with the command in `~/.local/bin`, rather than the shared Homebrew prefix. Copilot Viz requires Node.js 22 or later; npm engine checks are enforced during installation. After Homebrew is installed on WSL, update it with:
 
 ```sh
 env ANSIBLE_BECOME_ASK_PASS=false ansible-playbook site.yml --tags npm
@@ -322,7 +322,7 @@ copilot-viz status
 copilot-viz stop
 ```
 
-Use **Settings** to register and check SSH hosts, choose the history window, and set the server auto-exit and SSH pause timers. Settings stay in `~/.copilot/copilot-viz.json`, or `$COPILOT_HOME/copilot-viz.json`. The package deploys its worker over SSH, so a remote host needs OpenSSH and Node.js 22 or later, but no copy of these dotfiles or npm installation of Copilot Viz. First connect with `ssh <host>` yourself to verify the host key and authentication.
+Use **Settings** to register and check SSH hosts, choose the history window, and set the server auto-exit and SSH pause timers. Settings stay in `~/.copilot/copilot-viz.json`, or `$COPILOT_HOME/copilot-viz.json`. The package deploys its worker over SSH, so a remote host needs OpenSSH and Node.js 22 or later, but no copy of these dotfiles or npm installation of the Copilot Viz CLI. First connect with `ssh <host>` yourself to verify the host key and authentication.
 
 See the [upstream README](https://github.com/yosh-matsuda/copilot-viz#readme) for the demo, SSH setup, command options, and access restrictions. Paired viewers can change settings and use the server user's SSH access; only share pairing links with people you trust with that access.
 

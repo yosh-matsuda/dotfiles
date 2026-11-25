@@ -139,7 +139,7 @@
 
 - name: Install user npm tools
   tags: npm
-  when: brew_binary_path is not none and brew_binary_stat.stat.exists
+  when: brew_binary_path is not none and brew_binary_stat.stat.exists and brew_is_wsl
   become: false
   community.general.npm:
     name: "{{ item }}"
