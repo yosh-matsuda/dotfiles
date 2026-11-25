@@ -1,7 +1,7 @@
 # Local override of herdr's Copilot detection manifest, which is
 # https://herdr.dev/agent-detection/github-copilot.toml at version 2026.08.29.1.
 # A local override wins over every remote update, so drop this file once herdr
-# publishes a newer version with the change below.
+# publishes a newer version with the changes below.
 #
 # Changed: working_cancel_hint matched its hints anywhere in the recent screen,
 # so a reply or a prompt that mentioned "esc interrupt" kept an idle Copilot
@@ -13,6 +13,18 @@
 # ctrl_c_interrupt_working. Copilot CLI 1.0.107 shows "ctrl+c interrupt" in
 # that row instead of "esc esc interrupt", which no published rule matches, so
 # a working Copilot fell back to idle.
+#
+# Changed until herdr settles https://github.com/herdrdev/herdr/issues/4329:
+# background_agents_working accepted only "◎" before "Waiting for background
+# agents". Copilot animates that mark through ●◉◎○ (∙∘ on the alternate
+# screen) and draws a still "●" while only background agents run, so herdr
+# reported such a pane as idle. The rule now takes every frame and a badge
+# prefix such as "Autopilot ·". It reads only the bottom four lines, like
+# working_cancel_hint, because "●" also starts the entries of the timeline.
+#
+# Added for the same issue: stop_agents_hint_working. Copilot shows
+# "ctrl+c stop agents" or "esc again to stop agents" in the activity row only
+# while background agents run.
 id = "copilot"
 version = "2026.08.29.1"
 min_engine_version = 1
@@ -42,9 +54,17 @@ all = [
 id = "background_agents_working"
 state = "working"
 priority = 110
-region = "bottom_non_empty_lines(6)"
+region = "bottom_non_empty_lines(4)"
 visible_working = true
-line_regex = ['^\s*◎\s+Waiting for background agents(?:\s|·|$)']
+line_regex = ['^\s*(?:[^┃\s].*\s)?[●◉◎○∙∘]\s+Waiting for background agents(?:\s|·|$)']
+
+[[rules]]
+id = "stop_agents_hint_working"
+state = "working"
+priority = 110
+region = "bottom_non_empty_lines(4)"
+visible_working = true
+line_regex = ['(?i)^\s*[^┃\s].*\b(?:ctrl\+c|esc)\s+(?:again\s+to\s+)?stop\s+agents\b']
 
 [[rules]]
 id = "working_cancel_hint"
