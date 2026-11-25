@@ -1,4 +1,5 @@
 - name: Check if Homebrew is installed
+  tags: npm
   when: brew_binary_path is not none
   ansible.builtin.stat:
     path: "{{ brew_binary_path }}"
@@ -135,6 +136,23 @@
     state: present
   environment:
     HOME: "{{ brew_exec_home }}"
+
+- name: Install user npm tools
+  tags: npm
+  when: brew_binary_path is not none and brew_binary_stat.stat.exists
+  become: false
+  community.general.npm:
+    name: "{{ item }}"
+    global: true
+    state: latest
+    executable: "{{ brew_bin_dir }}/npm"
+    registry: https://registry.npmjs.org
+  loop: "{{ npm_tools }}"
+  environment:
+    HOME: "{{ home_dir }}"
+    PATH: "{{ brew_bin_dir }}:{{ ansible_facts['env']['PATH'] }}"
+    npm_config_prefix: "{{ home_dir }}/.local"
+    npm_config_engine_strict: "true"
 
 - name: Allow shared Copilot CLI self-updates on Linux servers
   when:

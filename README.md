@@ -308,55 +308,47 @@ herdr infers Copilot's state from the screen, so it shows at most that a session
 
 ### Agent dashboard
 
-`copilot-viz` shows the Copilot CLI sessions of the host in a browser: a map of the agents and subagents of a session with the tool call each one runs, its background shells, a timeline of the tool calls, a feed of the prompts, replies, and calls, and the AI credits of the session. An agent opens its prompt and result, and a call opens its command and output. The fish function runs [files/scripts/copilot-viz/cli.mjs](files/scripts/copilot-viz/cli.mjs) with Node.js and needs no packages. It reads the logs under `~/.copilot/session-state`, or `$COPILOT_HOME/session-state`, and changes nothing there, so it covers sessions in a terminal and in the VS Code agent host alike.
+[Copilot Viz](https://github.com/yosh-matsuda/copilot-viz) shows the agents, subagents, tool calls, and background shells of Copilot CLI sessions in a browser, on this machine and over SSH. It reads the logs of terminal and VS Code agent-host sessions without changing them. The dashboard is maintained in its own repository; this repository installs the npm package.
 
-```text
-copilot-viz [open] [--port N] [--since DURATION] [--no-open]
-copilot-viz serve [--port N] [--since DURATION] [--idle-exit MINUTES] [--pause-remotes MINUTES]
+The `brew` role installs or upgrades `npm_tools` from [group_vars/all.yml](group_vars/all.yml) after installing Node.js. npm tools go into each user's `~/.local`, with commands in `~/.local/bin`, rather than the shared Homebrew prefix. Copilot Viz requires Node.js 22 or later; npm engine checks are enforced during installation. After Homebrew is installed, update only these tools with:
+
+```sh
+env ANSIBLE_BECOME_ASK_PASS=false ansible-playbook site.yml --tags npm
+```
+
+```sh
+copilot-viz
 copilot-viz status
 copilot-viz stop
 ```
 
--   `copilot-viz` starts the server in the background when none runs, and opens a new link in the browser. The server listens on `127.0.0.1:7421`, or on a free port when that one is taken, and exits after 10 minutes without a viewer. `--since` (default `24h`) sets how long ended sessions stay listed; running sessions always are. When `--port` or `--since` asks for another value, or `git pull` changed the server code, the next `copilot-viz` restarts the server. The server reads the page files on each request, so a change to them needs only a reload of the page.
--   With **Follow** on, the dashboard moves to a session that waits for input or approval, or to a working session while the shown one is idle; an open panel holds it back. Picking a session turns Follow off, and the URL keeps the pick.
--   The link holds a pairing code that works once, for two minutes. The page trades it for a token, keeps the token in `localStorage`, and sends it with every request. The token lives only in the server process, so after the server restarts the page asks to pair again: run `copilot-viz`.
--   The server rejects a request whose `Host` is not `127.0.0.1`, `localhost`, or `[::1]`, which blocks DNS rebinding. On Linux it also rejects a connection from a program of another user, found by the owner of the client socket in `/proc/net/tcp` and `tcp6`. On WSL, the connections of a Windows browser belong to root or have no row there, so the server accepts both.
--   Over SSH, `copilot-viz` also prints the `ssh -L` command that forwards the port from the local machine. Run it before the link is opened, or pass `--no-open` and open the link locally.
--   A session is live while a process named by an `inuse.<pid>.lock` in its directory runs Copilot and keeps `inuse.<pid>.hold` open. The lock stays when Copilot is killed, and the hold tells Copilot from a process that reused its PID. A session whose process ended shows the calls and shells it left running as `stopped`, because they never report their end.
--   An auto session writes its messages and tool events only when Copilot commits the turn, and the session list marks it `auto`. Copilot logs each hook as it starts, so the calls of the turn appear while it runs, through the `preToolUse` hook that `files/copilot/settings.json` registers for every tool. Copilot CLI in a terminal has no `postToolUse` hook, so those calls show as running until the commit; the VS Code agent host registers one, which ends them earlier.
--   Each session keeps its newest 300 tool calls and 150 feed entries.
--   The timeline marks idle, inferred response-pending time, and waits for input or approval with a thin lane stripe; tool bars continue to show execution time.
--   A background shell gets an indented lane under the agent that started it, which spans the time the shell runs, since its `bash` call ends as soon as the shell starts. Shells that do not overlap share a lane, and each agent has at most four shell lanes. A detached shell whose end the log never reported ends where Copilot restarted, or at the end of the log of a session whose process ended.
+Use **Settings** to register and check SSH hosts, choose the history window, and set the server auto-exit and SSH pause timers. Settings stay in `~/.copilot/copilot-viz.json`, or `$COPILOT_HOME/copilot-viz.json`. The package deploys its worker over SSH, so a remote host needs OpenSSH and Node.js 22 or later, but no copy of these dotfiles or npm installation of Copilot Viz. First connect with `ssh <host>` yourself to verify the host key and authentication.
 
-The agent lifecycle follows [agenttop](https://github.com/daknoblo/agenttop), and its MIT license is in [LICENSE.agenttop](files/scripts/copilot-viz/LICENSE.agenttop).
+See the [upstream README](https://github.com/yosh-matsuda/copilot-viz#readme) for the demo, SSH setup, command options, and access restrictions. Paired viewers can change settings and use the server user's SSH access; only share pairing links with people you trust with that access.
 
-#### Remote hosts over SSH
+#### Migrating from the bundled version
 
-Run `copilot-viz` on the local machine (WSL when the browser runs on Windows) to see local and remote sessions together. Update this dotfiles repository on each remote host first. The local server starts a read-only Node.js worker over SSH; the worker sends session updates and answers requests for call details over that connection. It opens no HTTP port, needs no pairing token, and does not change the Copilot logs.
+On each machine that runs the old dashboard, install and verify the npm package **before pulling the commit that removes the bundled version**. The fish configuration is linked into this checkout, so that pull removes the old function immediately. Upgrade dashboard clients before removing the old worker files from SSH hosts too.
 
-Create `~/.copilot/copilot-viz.json` on the local machine, or `$COPILOT_HOME/copilot-viz.json` when that variable is set:
+Keep the existing configuration file. If a remote entry has a `script` override pointing at the old dotfiles worker, remove that override before starting the new version so it deploys its own worker. Keep overrides for other custom workers.
 
-```json
-{
-  "version": 1,
-  "remotes": [
-    { "host": "dev" },
-    { "host": "staging" }
-  ]
-}
+Use the absolute command path so the old fish function cannot select the bundled implementation:
+
+```sh
+env npm_config_engine_strict=true npm install --global --prefix "$HOME/.local" --registry=https://registry.npmjs.org copilot-viz
+"$HOME/.local/bin/copilot-viz" --version
+"$HOME/.local/bin/copilot-viz" --no-open
+"$HOME/.local/bin/copilot-viz" status
 ```
 
-`host` is an SSH destination or a `Host` alias from the local SSH config. Only listed hosts are contacted; there is no automatic discovery. Up to 32 remotes may be listed. Existing identities, the SSH agent and `ProxyJump` work as usual. First connect with `ssh dev` yourself to verify the host key and authentication. Background connections use `BatchMode=yes` and `StrictHostKeyChecking=yes`, so they never ask for passwords or accept unknown host keys.
+The new command restarts an old server when needed and prints a fresh pairing link. Verify the installed version and local/SSH collection before pulling this repository. Reading a version-1 configuration leaves it unchanged; saving in Settings upgrades it to version 2, which older versions cannot read. Keep a backup before the first save if you need to downgrade.
 
-The defaults are `node` and `dotfiles/files/scripts/copilot-viz/worker.mjs`, resolved from the remote user's home directory. Optional `node`, `script`, and `copilotHome` fields override the executable, worker path and Copilot data directory for that host. Use an absolute path or a home-relative path, without `~` or shell variables. For example, set `"node": "/home/linuxbrew/.linuxbrew/bin/node"` if a non-interactive SSH session has no Node on its PATH. The worker uses its remote `COPILOT_HOME` or `~/.copilot` when `copilotHome` is omitted; the local value is not forwarded.
+After updating the checkout, clear the cached function in each already-open fish shell:
 
-Run `copilot-viz` again after editing this file; it validates the configuration before restarting the local server. Its `--since` window applies to every host. The **Host** selector filters both sessions and counters, and the host list shows connection errors. `copilot-viz status` also lists remote connection states.
-
-A disconnected host retains its last received sessions, marked offline, until a complete new snapshot replaces them. Its unfinished work has an unknown state and is excluded from live counters. SSH retries back off to 30 seconds; a missing or incompatible worker requires updating the remote dotfiles. Remote durations use the remote clock, so clock differences do not inflate elapsed time. Call details are routed by host and session generation, even when hosts have identical session IDs.
-
-When no dashboard page has been in view for 10 minutes, because every tab is hidden or its window is minimized, the server closes SSH to the remote hosts. The host list shows them as `paused`, and their sessions stay as those of a disconnected host. A page that comes into view connects them again at once. `serve --pause-remotes MINUTES` changes the time, and `0` keeps them connected. A hidden tab still keeps the local server running; the server exits only after 10 minutes without any open page.
-
-`copilot-viz stop` stops the SSH clients too. Workers exit when their input closes, or after 45 seconds without a client heartbeat. A remote snapshot is limited to 64 MiB; an oversized snapshot or incompatible protocol shows an error without automatic retries. Reduce the history window or update the remote code, then restart the local server.
+```fish
+functions --erase copilot-viz
+copilot-viz
+```
 
 ### Forking into a herdr tab
 

@@ -38,6 +38,8 @@ brew_binary_path: >-
     else none
   }}
 brew_bin_dir: "{{ brew_binary_path | dirname if brew_binary_path is not none else none }}"
+npm_tools:
+- copilot-viz
 # Pin with a version specifier (e.g. cmakelang==0.6.13) to exclude a tool from upgrades
 uv_tools:
 - cmakelang
