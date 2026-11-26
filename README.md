@@ -13,7 +13,7 @@ On Ubuntu, WSL, and macOS, with the Ansible playbook:
 -   Homebrew packages and casks, including Copilot CLI
 -   pipx packages
 -   Docker on WSL
--   herdr and automatic startup in interactive SSH terminals
+-   herdr and automatic startup in WezTerm on WSL
 -   Pairfob for phone access to herdr on Ubuntu
 -   fish and fisher
 -   Copilot CLI settings, extensions, hooks, and personas
@@ -162,8 +162,8 @@ On WSL, the `windows` role writes into the Windows user profile through `/mnt/c`
 ### herdr
 
 -   herdr is installed with Homebrew, and its self-update is disabled for Homebrew installs. Detach, run `brew update && brew upgrade herdr`, then run `herdr` again to reconnect with the updated client. The running server keeps its old version; `herdr status` reports `update.restart_needed`, and only then is `herdr server stop` required.
--   Interactive SSH terminals start herdr automatically, except inside VS Code and herdr. Set `DOTFILES_NO_HERDR=1` to opt out, or use `ssh -t HOST 'bash --noprofile --norc -i'` for a recovery shell.
--   `Ctrl+b q` detaches the client and leaves the server and its panes running. herdr is started without `exec`, so detaching returns to the login shell instead of closing the SSH session, which is what the update flow above needs.
+-   A WezTerm tab on WSL starts herdr automatically when no herdr client runs yet, so a tab opened next to it stays a plain shell. VS Code terminals, herdr panes, and SSH logins do not start it. Remote hosts are reached as saved machines (`herdr machine add`) from the WSL client; their `ssh` runs a command without a login shell, and the remote server starts on demand. An `ssh` from a herdr pane would not forward `HERDR_ENV`, so starting herdr on SSH login would nest a second client inside the pane. Run `herdr` by hand on an SSH host for the tmux-style workflow. Set `DOTFILES_NO_HERDR=1` to opt out, or run `wsl.exe --exec bash --noprofile --norc` from PowerShell for a recovery shell.
+-   `Ctrl+b q` detaches the client and leaves the server and its panes running. herdr is started without `exec`, so detaching returns to the login shell instead of closing the WezTerm tab or SSH session, which is what the update flow above needs.
 -   Panes inherit the environment of the long-lived `herdr server` process, so shell startup must not depend on inherited variables. A server auto-started by `herdr --remote` or a saved machine runs from a non-login SSH command and lacks `PATH` from `~/.profile`, so `[terminal] shell_mode = "login"` makes each pane run `~/.profile` itself. Pane commands ignore `shell_mode`, so the VS Code shortcut loads `~/.profile` explicitly before invoking `code` or the VS Code remote CLI. The shortcut, the fish function `code-remote`, and the [file link](#file-links) plugin all run [files/herdr/code-remote/code-remote.sh](files/herdr/code-remote/code-remote.sh), which needs bash but not fish. herdr takes custom commands from the config of the server that runs the pane, so the script is in the same checkout wherever the shortcut exists. On WSL, a server that Pairfob starts through systemd lacks `WSL_DISTRO_NAME` and the Windows `PATH`, which `code` needs, so `~/.profile` restores both when `WSL_DISTRO_NAME` is unset. Interactive bash switches to fish based on its parent process, which keeps herdr panes on fish no matter where the server was started from.
 -   Apply config changes with `herdr server reload-config`.
 -   Only [files/herdr/config.toml](files/herdr/config.toml) and the [agent detection overrides](#agent-state) are managed. Do not commit session snapshots, logs, sockets, or other runtime state from `~/.config/herdr`.

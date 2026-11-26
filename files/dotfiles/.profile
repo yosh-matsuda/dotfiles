@@ -119,11 +119,16 @@ IsInteractiveTerminal() {
 }
 
 if IsInteractiveTerminal; then
-    if [ -n "${SSH_CONNECTION:-}" ] &&
-        [ "${TERM_PROGRAM:-}" != "vscode" ] &&
+    # Only WezTerm on WSL: VS Code terminals set TERM_PROGRAM=vscode, and SSH hosts are reached through herdr's saved
+    # machines. A tab opened while a herdr client runs stays a plain shell; the API cannot list clients, so pgrep
+    # looks for a bare `herdr` command line, which excludes `herdr server`.
+    if [ -n "${WSL_DISTRO_NAME:-}" ] &&
+        [ -z "${SSH_CONNECTION:-}" ] &&
+        [ "${TERM_PROGRAM:-}" = "WezTerm" ] &&
         [ "${HERDR_ENV:-}" != "1" ] &&
         [ "${DOTFILES_NO_HERDR:-}" != "1" ] &&
-        command -v herdr >/dev/null 2>&1; then
+        command -v herdr >/dev/null 2>&1 &&
+        ! pgrep -u "$(id -u)" -fx '(.*/)?herdr' >/dev/null 2>&1; then
         # exec しないのは、デタッチ後もログインシェルを残して herdr 自体の更新をできるようにするため
         herdr
     fi
